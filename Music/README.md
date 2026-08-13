@@ -158,20 +158,28 @@ computes, so `manifest.tbl` works for both the store and the in-app updater.
 
 ## Converting audio
 
-**ffmpeg (5.1+)**:
+**Do not use ffmpeg's dfpwm encoder.** There are two incompatible codecs of
+that name, and picking the wrong one is the difference between music and
+noise:
 
-```sh
-ffmpeg -i song.mp3 -ac 1 -ar 32768 -c:a dfpwm -f dfpwm "Artist - Title.dfpwm"
-```
+* **DFPWM1a** — ChenThread's revision, used by CC:Tweaked, and what
+  `ffmpeg -c:a dfpwm` writes.
+* **DFPWM 1.0** — GreaseMonkey's 2013 original, which is what Computronics
+  decodes through AsieLib's `pl.asie.lib.audio.DFPWM`.
 
-**[music.madefor.cc](https://music.madefor.cc/)** — web converter that targets
-Computronics directly. **[LionRay](https://github.com/gamax92/LionRay/releases/)**
-— what the Computronics manual recommends; takes WAV.
+They differ in charge precision, in how the response strength moves, and 1a
+adds an antijerk filter 1.0 knows nothing about. Decoding the same excerpt
+with AsieLib's own maths, 1.0 reconstructs at **11.70 dB** SNR against 1a's
+**2.88 dB**.
 
-> If ffmpeg output comes back as static, use one of the other two. ffmpeg
-> encodes DFPWM1a; Computronics decodes through asie's codec, which lives in a
-> library outside the GTNH Computronics repo and so has not been verified
-> against ffmpeg's encoder here.
+Converters that produce the right thing:
+
+* [LionRay](https://github.com/gamax92/LionRay/releases/) — what the
+  Computronics manual recommends, and now you know why.
+* [music.madefor.cc](https://music.madefor.cc/) — web converter that targets
+  Computronics.
+* The `tools/` folder of a song repository set up for this app, which uses
+  ffmpeg to decode and filter and then compresses with its own 1.0 encoder.
 
 ### How much fits
 
