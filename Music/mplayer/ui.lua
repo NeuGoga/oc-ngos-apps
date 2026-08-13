@@ -1,22 +1,22 @@
--- mplayer.ui -- terminal UI for the tape player.
+-- mplayer.ui -- one screen: what is on the cassette, and the transport.
 --
--- Drives both entry points. Input comes through mplayer.rt, so the exact same
--- screen works under OpenOS (real event timers) and under the NgOS kernel
--- (where we pull signals ourselves and hand the window buttons back).
+-- Input comes through mplayer.rt, so the same screen works under OpenOS and
+-- under the NgOS kernel. ESC is never used as a key: Minecraft takes it to
+-- open the game menu, so it never reaches the app.
 
 local component = require("component")
 local unicode = require("unicode")
 local rt = require("mplayer.rt")
-local player = require("mplayer.player")
-local download = require("mplayer.download")
+local tapeLib = require("mplayer.tape")
+local record = require("mplayer.record")
+local config = require("mplayer.config")
 
 local ui = {}
 
--- Stamped by tools/make_manifest.py at release time. Baked into the source on
--- purpose rather than read from version.txt: that file records what was last
--- downloaded, this records what is actually executing, and when a stale module
--- is still cached those are not the same thing.
-local VERSION = "1.1.2" --[[VERSION]]
+-- Stamped by tools/make_manifest.py at release time. Baked into the source
+-- rather than read from a file: this reports what is executing, which is not
+-- always what was last downloaded.
+local VERSION = "2.0.0" --[[VERSION]]
 
 local gpu = component.gpu
 
@@ -29,18 +29,12 @@ local T = {
   ok     = 0x66CC66,
   warn   = 0xFFCC33,
   err    = 0xFF6E6E,
-  sel    = 0x2E4A6E,
   black  = 0x000000,
-  white  = 0xFFFFFF,
 }
-
--- Drawing helpers --------------------------------------------------------
 
 local w, h
 
-local function refreshSize()
-  w, h = gpu.getResolution()
-end
+local function refreshSize() w, h = gpu.getResolution() end
 
 local function fill(x, y, width, height, bg)
   gpu.setBackground(bg)
@@ -52,9 +46,7 @@ local function write(x, y, text, fg, bg)
   gpu.setForeground(fg or T.text)
   gpu.setBackground(bg or T.bg)
   local room = w - x + 1
-  if unicode.len(text) > room then
-    text = unicode.sub(text, 1, room)
-  end
+  if unicode.len(text) > room then text = unicode.sub(text, 1, room) end
   gpu.set(x, y, text)
 end
 
@@ -67,765 +59,279 @@ local function pad(text, width)
   return text .. string.rep(" ", width - len)
 end
 
-local function bar(x, y, width, fraction, fg, bg)
-  fraction = math.max(0, math.min(1, fraction or 0))
-  local filled = math.floor(width * fraction + 0.5)
-  write(x, y, string.rep("=", filled), fg, bg)
-  write(x + filled, y, string.rep("-", width - filled), T.dim, bg)
+local function clock(seconds)
+  seconds = math.max(0, math.floor(seconds or 0))
+  return ("%d:%02d"):format(math.floor(seconds / 60), seconds % 60)
 end
 
 -- Screen -----------------------------------------------------------------
 
--- Rows reserved above and below the list.
-local HEADER_ROWS = 5
-local FOOTER_ROWS = 2
-
 local State = {}
 State.__index = State
 
-local function newState(p)
-  return setmetatable({
-    p = p,
-    view = "queue",             -- "queue" (the tape) | "library" (the repo)
-    selected = { queue = 1, library = 1 },
-    scroll = { queue = 0, library = 0 },
-    library = nil,              -- catalog entries, fetched on first use
-    libraryError = nil,
-    hits = {},                  -- clickable regions, rebuilt every draw
-    needsRedraw = true,
-    running = true,
-  }, State)
-end
-
---- Entries shown in the current view.
-function State:items()
-  if self.view == "library" then return self.library or {} end
-  return self.p:tracks()
-end
-
-function State:sel(value)
-  if value ~= nil then self.selected[self.view] = value end
-  return self.selected[self.view]
-end
-
-function State:scr(value)
-  if value ~= nil then self.scroll[self.view] = value end
-  return self.scroll[self.view]
-end
-
---- Fetch the repository's song catalog. Blocking, so paint a note first.
-function State:loadLibrary(force)
-  if self.library and not force then return end
-  local repo = require("mplayer.repo")
-  local catalog = require("mplayer.catalog")
-
-  local cfg = repo.load()
-  local songs = repo.songs(cfg)
-  if not repo.configured(songs) then
-    self.library, self.libraryError =
-      {}, "No song repository set yet. Press C to enter it."
-    return
-  end
-
-  fill(1, HEADER_ROWS, w, 1, T.bg)
-  write(3, HEADER_ROWS,
-    "Fetching the song list from " .. catalog.origin(cfg) .. " ...", T.dim)
-
-  local list, err = catalog.fetch(cfg)
-  self.library = list or {}
-  self.libraryError = err
-end
-
-function State:hit(x1, x2, y, action, arg)
-  self.hits[#self.hits + 1] = { x1 = x1, x2 = x2, y = y, action = action, arg = arg }
+function State:hit(x1, x2, y, action)
+  self.hits[#self.hits + 1] = { x1 = x1, x2 = x2, y = y, action = action }
 end
 
 function State:findHit(x, y)
   for _, r in ipairs(self.hits) do
     if y == r.y and x >= r.x1 and x <= r.x2 then return r end
   end
-  return nil
 end
 
-function State:listHeight()
-  return math.max(1, h - HEADER_ROWS - FOOTER_ROWS)
+local function button(state, x, y, text, action, fg)
+  write(x, y, text, fg or T.text, T.panel)
+  state:hit(x, x + #text - 1, y, action)
+  return x + #text + 1
 end
 
 function State:draw()
-  local p = self.p
   self.hits = {}
   refreshSize()
-
   fill(1, 1, w, h, T.bg)
+
+  local deck = self.deck
 
   -- Title bar. The last two cells belong to the NgOS window buttons.
   local titleWidth = rt.ngos and (w - 2) or w
   fill(1, 1, titleWidth, 1, T.panel)
-  local label = p.tape.ready and (p.tape.label ~= "" and p.tape.label or "unlabelled tape")
-      or "no tape"
   write(2, 1, "TAPE", T.accent, T.panel)
   write(7, 1, VERSION, T.dim, T.panel)
+  local server = config.configured(self.cfg)
+      and (self.cfg.host .. ":" .. self.cfg.port) or "no server set"
+  local sx = titleWidth - #server - 1
+  if sx > 20 then write(sx, 1, server, T.dim, T.panel) end
 
-  local x = 8 + #VERSION
-  for _, tab in ipairs({ { "queue", "Queue" }, { "library", "Library" } }) do
-    local active = self.view == tab[1]
-    local text = " " .. tab[2] .. " "
-    write(x, 1, text, active and T.black or T.dim, active and T.accent or T.panel)
-    self:hit(x, x + #text - 1, 1, "view", tab[1])
-    x = x + #text
-  end
-
-  write(x + 1, 1, "[" .. label .. "]", T.dim, T.panel)
-
-  if p.tape.ready then
-    -- A track is only indexed once it finishes, so count what a running
-    -- recording has already laid down or the tape looks untouched.
-    local free = p.tape:free() - (p.job and p.job.written or 0)
-    local usage = ("%s free of %s"):format(
-      player.formatSize(math.max(0, free)), player.formatSize(p.tape:capacity()))
-    local ux = titleWidth - #usage - 1
-    if ux > x + #label + 4 then write(ux, 1, usage, T.dim, T.panel) end
-  end
-
-  self:drawNowPlaying()
-  self:drawControls()
-  self:drawList()
-  self:drawFooter()
-end
-
-function State:drawNowPlaying()
-  local p = self.p
-  local track = p:currentTrack()
-
-  local title
-  if p.job then
-    title = "Recording: " .. p.job.title
-  elseif track then
-    title = track.title
+  -- What is on the cassette.
+  local title, colour
+  if self.job then
+    title = "Recording..."
+    colour = T.warn
+  elseif not deck.ready then
+    title = "No cassette in the drive"
+    colour = T.err
+  elseif deck.label == "" then
+    title = "Blank cassette (unlabelled)"
+    colour = T.dim
   else
-    title = "-"
+    title = deck.label
+    colour = deck:isPlaying() and T.accent or T.text
   end
+  write(2, 3, pad(title, w - 3), colour)
 
-  local marker = p.state == "playing" and ">" or p.state == "paused" and "||" or "#"
-  write(2, 2, marker .. " " .. pad(title, math.max(1, w - 5)),
-    p.state == "stopped" and T.dim or T.text)
-
-  -- Progress line
-  local elapsed, total, fraction
-  if p.job then
-    elapsed = p.job:seconds()
-    fraction = p.job:progress()
-    total = fraction and (elapsed / math.max(fraction, 0.001)) or nil
+  -- Progress.
+  local elapsed, total
+  if self.job then
+    elapsed, total = self.job:seconds(), deck:duration()
   else
-    elapsed = p:position()
-    total = p:duration()
-    fraction = total > 0 and (elapsed / total) or 0
+    elapsed, total = deck:elapsed(), deck:duration()
   end
-
-  local left = player.formatTime(elapsed)
-  local right = total and player.formatTime(total) or "?:??"
+  local left, right = clock(elapsed), clock(total)
   local barX = 2 + #left + 1
   local barWidth = math.max(4, w - #left - #right - 5)
+  local fraction = total > 0 and math.min(1, elapsed / total) or 0
+  local filled = math.floor(barWidth * fraction + 0.5)
 
-  write(2, 3, left, T.dim)
-  if p.job and not fraction then
-    -- No Content-Length: show activity rather than a fake percentage.
-    write(barX, 3, pad("downloading...", barWidth), T.warn)
-  else
-    bar(barX, 3, barWidth, fraction, p.job and T.warn or T.accent)
-    if not p.job then
-      self:hit(barX, barX + barWidth - 1, 3, "seek", { x = barX, width = barWidth })
-    end
-  end
-  write(barX + barWidth + 1, 3, right, T.dim)
-end
+  write(2, 4, left, T.dim)
+  write(barX, 4, string.rep("=", filled), self.job and T.warn or T.accent)
+  write(barX + filled, 4, string.rep("-", barWidth - filled), T.dim)
+  write(barX + barWidth + 1, 4, right, T.dim)
 
-local function button(state, x, y, text, action, arg, fg)
-  write(x, y, text, fg or T.text, T.panel)
-  state:hit(x, x + #text - 1, y, action, arg)
-  return x + #text + 1
-end
-
-function State:drawControls()
-  local p = self.p
-  fill(1, 4, w, 1, T.panel)
-
+  -- Transport.
+  fill(1, 6, w, 1, T.panel)
   local x = 2
-  x = button(self, x, 4, "[<<]", "prev")
-  x = button(self, x, 4, p.state == "playing" and "[ || ]" or "[ >  ]", "toggle",
-    nil, p.state == "playing" and T.warn or T.ok)
-  x = button(self, x, 4, "[>>]", "next")
-  x = button(self, x, 4, "[#]", "stop")
-  x = x + 1
-
-  x = button(self, x, 4, "Shuf:" .. (p.shuffle and "on " or "off"), "shuffle", nil,
-    p.shuffle and T.ok or T.dim)
-  x = button(self, x, 4, "Rep:" .. pad(p.repeatMode, 3), "repeat", nil,
-    p.repeatMode ~= "off" and T.ok or T.dim)
-
-  x = button(self, x, 4, ("Vol:%3d%%"):format(math.floor(p.volume * 100 + 0.5)), "volume")
-  x = button(self, x, 4, ("Spd:%.2fx"):format(p.speed), "speed")
-
-  if download.available() then
-    local text = "[+ Add from URL]"
-    if x + #text < w - 1 then
-      button(self, w - #text - 1, 4, text, "add", nil, T.accent)
-    else
-      button(self, x, 4, "[+URL]", "add", nil, T.accent)
-    end
+  if self.job then
+    x = button(self, x, 6, "[ CANCEL ]", "cancel", T.err)
+  else
+    x = button(self, x, 6, deck:isPlaying() and "[ STOP ]" or "[ PLAY ]", "toggle",
+      deck:isPlaying() and T.warn or T.ok)
+    x = button(self, x, 6, "[<< REWIND]", "rewind")
+    x = button(self, x, 6, "[ RECORD ]", "record", T.err)
+    x = button(self, x, 6, "[ LABEL ]", "label")
+    x = button(self, x, 6, "[ SERVER ]", "server")
   end
-end
+  local vol = ("Vol:%3d%%"):format(math.floor((self.cfg.volume or 1) * 100 + 0.5))
+  if x + #vol < titleWidth then button(self, titleWidth - #vol - 1, 6, vol, "volume", T.dim) end
 
-function State:clampScroll()
-  local count = #self:items()
-  local height = self:listHeight()
-  local selected, scroll = self:sel(), self:scr()
-
-  if selected < 1 then selected = math.min(1, count) end
-  if selected > count then selected = count end
-  if selected > 0 then
-    if selected <= scroll then
-      scroll = selected - 1
-    elseif selected > scroll + height then
-      scroll = selected - height
-    end
-  end
-  local maxScroll = math.max(0, count - height)
-  if scroll > maxScroll then scroll = maxScroll end
-  if scroll < 0 then scroll = 0 end
-
-  self:sel(selected)
-  self:scr(scroll)
-end
-
-function State:drawList()
-  local top = HEADER_ROWS
-  local height = self:listHeight()
-  self:clampScroll()
-  fill(1, top, w, height, T.bg)
-
-  if self.view == "library" then
-    return self:drawLibrary(top, height)
-  end
-  return self:drawQueue(top, height)
-end
-
-function State:drawQueue(top, height)
-  local p = self.p
-  local tracks = p:tracks()
-
-  if #tracks == 0 then
-    local msg = p.tape.ready
-        and "This tape is empty. TAB opens the library, or press A for a URL."
-        or "No tape in the drive. Insert one and press F5."
-    write(3, top + 1, msg, T.dim)
-    return
-  end
-
-  local playing = p:currentTrackIndex()
-  local scroll, selected = self:scr(), self:sel()
-
-  for row = 1, height do
-    local i = row + scroll
-    local track = tracks[i]
-    if not track then break end
-    local y = top + row - 1
-
-    local bg = (i == selected) and T.sel or T.bg
-    local fg = (i == playing) and T.accent or T.text
-    fill(1, y, w, 1, bg)
-
-    local time = player.formatTime(track.duration)
-    local hq = (track.rate or 32768) > 32768
-    local titleWidth = math.max(4, w - #time - 15)
-
-    write(2, y, (i == playing) and ">" or " ", T.accent, bg)
-    write(4, y, ("%2d."):format(i), T.dim, bg)
-    write(8, y, pad(track.title, titleWidth), fg, bg)
-    if hq then write(8 + titleWidth + 1, y, "HQ", T.ok, bg) end
-    write(8 + titleWidth + 4, y, time, T.dim, bg)
-    write(w - 1, y, "x", T.err, bg)
-
-    self:hit(1, w - 3, y, "select", i)
-    self:hit(w - 1, w - 1, y, "delete", i)
-  end
-end
-
-function State:drawLibrary(top, height)
-  if self.libraryError then
-    write(3, top + 1, pad(self.libraryError, w - 4), T.err)
-    write(3, top + 3, "C sets the repository.   R re-fetches the list.", T.dim)
-    return
-  end
-  local items = self.library or {}
-  if #items == 0 then
-    write(3, top + 1, "No songs in the repository's songs/ folder yet.", T.dim)
-    write(3, top + 3, "Add .dfpwm files there, run tools/make_manifest.py, push.", T.dim)
-    return
-  end
-
-  -- Which titles are already on the tape, so nothing gets recorded twice.
-  local onTape = {}
-  for _, track in ipairs(self.p:tracks()) do onTape[track.title] = true end
-
-  local scroll, selected = self:scr(), self:sel()
-  local free = self.p.tape.ready and self.p.tape:free() or 0
-
-  for row = 1, height do
-    local i = row + scroll
-    local entry = items[i]
-    if not entry then break end
-    local y = top + row - 1
-
-    local bg = (i == selected) and T.sel or T.bg
-    fill(1, y, w, 1, bg)
-
-    local time = entry.seconds and player.formatTime(entry.seconds) or "  ?  "
-    local hq = (entry.rate or 32768) > 32768
-    local titleWidth = math.max(4, w - #time - 17)
-
-    local mark, fg
-    if onTape[entry.title] then
-      mark, fg = "*", T.dim          -- already recorded
-    elseif entry.bytes and entry.bytes > free then
-      mark, fg = "!", T.warn         -- will not fit on what is left
-    else
-      mark, fg = " ", T.text
-    end
-
-    write(2, y, mark, fg, bg)
-    write(4, y, ("%2d."):format(i), T.dim, bg)
-    write(8, y, pad(entry.title, titleWidth), fg, bg)
-    if hq then write(8 + titleWidth + 1, y, "HQ", T.ok, bg) end
-    write(8 + titleWidth + 4, y, time, T.dim, bg)
-
-    self:hit(1, w - 1, y, "select", i)
-  end
-end
-
-function State:drawFooter()
-  local p = self.p
-  local y = h - 1
-
-  fill(1, y, w, 1, T.bg)
-  if p.message then
-    write(2, y, pad(p.message, w - 2), T.warn)
-  end
+  -- Message and hints.
+  fill(1, h - 1, w, 1, T.bg)
+  if self.message then write(2, h - 1, pad(self.message, w - 2), T.warn) end
 
   fill(1, h, w, 1, T.panel)
-  local hints
-  if p.job then
-    hints = "X cancels the recording"
-  elseif self.view == "library" then
-    hints = "TAB queue  ENTER record  R refresh  C repo  G diagnose  U update  Q quit   (* on tape)"
-  else
-    hints = "SPACE play/pause  N/P track  ENTER play  TAB library  D delete  A URL  S shuffle  C setup  G diagnose  Q quit"
-  end
+  local hints = self.job
+      and "X cancels the recording"
+      or "SPACE play/stop   W rewind   R record   L label   S server   -/+ volume   Q quit"
   write(2, h, pad(hints, w - 2), T.dim, T.panel)
 end
 
 -- Modal input ------------------------------------------------------------
 
---- Draw a centred box and read a line of text. Returns nil if cancelled.
---- Modal line editor. `secret` masks the text, for access tokens.
-function State:readLine(title, initial, secret)
-  local boxWidth = math.min(w - 6, 70)
+function State:readLine(title, initial)
+  local boxWidth = math.min(w - 6, 60)
   local x = math.floor((w - boxWidth) / 2)
   local y = math.floor(h / 2) - 2
-
   local text = initial or ""
-  local cursor = unicode.len(text) + 1
 
   while true do
     fill(x, y, boxWidth, 5, T.panel)
     write(x + 2, y + 1, title, T.accent, T.panel)
-
     local inner = boxWidth - 4
-    local shown = secret and string.rep("*", unicode.len(text)) or text
-    local view = shown
-    local offset = 0
-    if unicode.len(view) >= inner then
-      offset = unicode.len(view) - inner + 1
-      view = unicode.sub(view, offset + 1)
-    end
+    local view = text
+    if unicode.len(view) >= inner then view = unicode.sub(view, unicode.len(view) - inner + 2) end
     fill(x + 2, y + 2, inner, 1, T.bg)
-    write(x + 2, y + 2, view, T.text, T.bg)
-
-    local cursorX = x + 2 + (cursor - 1 - offset)
-    if cursorX >= x + 2 and cursorX < x + 2 + inner then
-      local under = unicode.sub(shown, cursor, cursor)
-      write(cursorX, y + 2, under ~= "" and under or " ", T.black, T.accent)
-    end
+    write(x + 2, y + 2, view .. "_", T.text, T.bg)
     write(x + 2, y + 3, "ENTER confirm    CTRL+C cancel", T.dim, T.panel)
 
     local event, _, char, code = rt.pull()
     if event == "key_down" then
-      if code == 28 then            -- enter
-        return text
-      elseif code == 1 or char == 3 then   -- escape (rarely arrives) or ctrl+c
-        return nil
-      elseif code == 14 then        -- backspace
-        if cursor > 1 then
-          text = unicode.sub(text, 1, cursor - 2) .. unicode.sub(text, cursor)
-          cursor = cursor - 1
-        end
-      elseif code == 211 then       -- delete
-        text = unicode.sub(text, 1, cursor - 1) .. unicode.sub(text, cursor + 1)
-      elseif code == 203 then       -- left
-        cursor = math.max(1, cursor - 1)
-      elseif code == 205 then       -- right
-        cursor = math.min(unicode.len(text) + 1, cursor + 1)
-      elseif code == 199 then       -- home
-        cursor = 1
-      elseif code == 207 then       -- end
-        cursor = unicode.len(text) + 1
-      elseif char and char >= 32 then
-        text = unicode.sub(text, 1, cursor - 1) .. unicode.char(char) .. unicode.sub(text, cursor)
-        cursor = cursor + 1
-      end
+      if code == 28 then return text
+      elseif code == 1 or char == 3 then return nil     -- ctrl+c (ESC rarely arrives)
+      elseif code == 14 then text = unicode.sub(text, 1, unicode.len(text) - 1)
+      elseif char and char >= 32 then text = text .. unicode.char(char) end
     elseif event == "clipboard" then
-      local paste = tostring(char or ""):gsub("[\r\n].*$", "")
-      text = unicode.sub(text, 1, cursor - 1) .. paste .. unicode.sub(text, cursor)
-      cursor = cursor + unicode.len(paste)
-    elseif event == "refresh" then
-      self:draw()
-    end
-  end
-end
-
---- Yes/no box.
-function State:confirm(question)
-  local boxWidth = math.min(w - 6, 60)
-  local x = math.floor((w - boxWidth) / 2)
-  local y = math.floor(h / 2) - 1
-
-  fill(x, y, boxWidth, 4, T.panel)
-  write(x + 2, y + 1, pad(question, boxWidth - 4), T.text, T.panel)
-  write(x + 2, y + 2, "Y confirm    N cancel", T.dim, T.panel)
-
-  while true do
-    local event, _, char, code = rt.pull()
-    if event == "key_down" then
-      if char == 121 or char == 89 then return true end   -- y / Y
-      if char == 110 or char == 78 or code == 1 or char == 3 then return false end
-      return false
+      text = text .. tostring(char or ""):gsub("[\r\n].*$", "")
     end
   end
 end
 
 -- Actions ----------------------------------------------------------------
 
---- Configure the song repository from inside the app.
--- The NgOS store installs the app files only; it ignores the manifest's
--- `system` block, so a store install has no `music` command to run setup
--- with. This is the way in for those installs.
-function State:configure()
-  local repo = require("mplayer.repo")
-  local cfg = repo.load()
+function State:setServer()
+  local host = self:readLine("Stream server host (ngrok TCP address):", self.cfg.host)
+  if not host then return end
+  local port = self:readLine("Port:", tostring(self.cfg.port ~= 0 and self.cfg.port or ""))
+  if not port then return end
 
-  local owner = self:readLine("Songs: GitHub user", cfg.songsOwner ~= "" and cfg.songsOwner or cfg.owner)
-  self.needsRedraw = true
-  if not owner then return end
-
-  local name = self:readLine("Songs: repository", cfg.songsName ~= "" and cfg.songsName or cfg.name)
-  self.needsRedraw = true
-  if not name then return end
-
-  local branch = self:readLine("Songs: branch", cfg.songsBranch ~= "" and cfg.songsBranch or "main")
-  self.needsRedraw = true
-  if not branch then return end
-
-  local token = self:readLine("Songs: access token (blank if public)", cfg.songsToken or "", true)
-  self.needsRedraw = true
-  if not token then return end
-
-  cfg.songsOwner = owner:match("^%s*(.-)%s*$")
-  cfg.songsName = name:match("^%s*(.-)%s*$")
-  cfg.songsBranch = branch:match("^%s*(.-)%s*$")
-  cfg.songsToken = token:match("^%s*(.-)%s*$")
-
-  local ok, err = repo.save(cfg)
-  if not ok then
-    self.p.message = "Could not save: " .. tostring(err)
-    return
-  end
-
-  self.p.message = "Saved to " .. repo.CONFIG_FILE .. " - fetching the song list..."
-  self:draw()
-
-  self.view = "library"
-  self:loadLibrary(true)
-  if self.libraryError then
-    self.p.message = "Saved, but: " .. self.libraryError
-  else
-    self.p.message = ("Saved. %d song(s) available."):format(#(self.library or {}))
-  end
+  self.cfg.host = host:match("^%s*(.-)%s*$")
+  self.cfg.port = tonumber(port) or 0
+  config.save(self.cfg)
+  self.message = config.configured(self.cfg)
+      and ("Server set to " .. self.cfg.host .. ":" .. self.cfg.port)
+      or "Host and port are both needed."
 end
 
---- Full screen connection report. NgOS boots straight into the desktop, so
---- there is not necessarily a shell to run `music diag` from.
-function State:diagnose()
-  fill(1, 1, w, h, T.bg)
-  write(2, 1, "Probing the connection...", T.accent)
-
-  local ok, lines = pcall(function()
-    return require("mplayer.diag").report(nil, self.view == "library" and self:sel() or 1)
-  end)
-  if not ok then
-    lines = { "Diagnostics failed:", tostring(lines) }
+function State:setLabel()
+  if not self.deck.ready then
+    self.message = "No cassette in the drive."
+    return
   end
-
-  local top = 0
-  while true do
-    fill(1, 1, w, h, T.bg)
-    fill(1, 1, w, 1, T.panel)
-    write(2, 1, "CONNECTION REPORT", T.accent, T.panel)
-    write(w - 26, 1, "up/down scroll   Q close", T.dim, T.panel)
-
-    local rows = h - 2
-    for row = 1, rows do
-      local line = lines[row + top]
-      if not line then break end
-      local colour = T.text
-      if line:match("^%u[%u ]+$") then colour = T.accent
-      elseif line:find("NO") or line:find("FAILED") or line:find("failed")
-          or line:find("rejected") or line:find("error") then colour = T.err
-      elseif line:sub(1, 4) == "    " then colour = T.dim end
-      write(2, row + 1, line, colour)
-    end
-
-    if #lines > rows then
-      write(2, h, ("line %d-%d of %d"):format(top + 1,
-        math.min(top + rows, #lines), #lines), T.dim, T.panel)
-    end
-
-    local event, _, char, code = rt.pull()
-    if event == "key_down" then
-      if code == 200 then top = math.max(0, top - 1)
-      elseif code == 208 then top = math.min(math.max(0, #lines - (h - 2)), top + 1)
-      elseif code == 201 then top = math.max(0, top - (h - 2))
-      elseif code == 209 then top = math.min(math.max(0, #lines - (h - 2)), top + (h - 2))
-      else return end
-    elseif event == "touch" then
-      return
-    end
-  end
+  local label = self:readLine("Cassette label (the song title):", self.deck.label)
+  if not label then return end
+  self.deck:setLabel(label)
+  self.message = "Labelled: " .. label
 end
 
-function State:startDownload()
-  local p = self.p
-  if not download.available() then
-    p.message = "No internet card installed."
+function State:startRecording()
+  if not record.available() then
+    self.message = "No internet card installed."
     return
   end
-  if not p.tape.ready then
-    p.message = "No tape in the drive."
+  if not self.deck.ready then
+    self.message = "No cassette in the drive."
+    return
+  end
+  if not config.configured(self.cfg) then
+    self.message = "Set the stream server first (S)."
     return
   end
 
-  local url = self:readLine("URL of a .dfpwm file:", "http://")
-  self.needsRedraw = true
-  if not url or url == "" or url == "http://" then return end
-
-  local suggestion = url:match("([^/]+)%.dfpwm$") or url:match("([^/]+)$") or "Track"
-  suggestion = suggestion:gsub("%%20", " "):sub(1, 48)
-  local title = self:readLine("Track title:", suggestion)
-  self.needsRedraw = true
-  if not title or title == "" then return end
-
-  local job, err = p:download(url, title)
+  local job, err = record.start(self.deck, self.cfg.host, self.cfg.port)
   if not job then
-    p.message = "Cannot start: " .. tostring(err)
-  else
-    p.message = "Connecting..."
+    self.message = "Cannot record: " .. tostring(err)
+    return
   end
+  self.job = job
+  self.message = "Recording over everything on this cassette..."
 end
 
-function State:deleteTrack(i)
-  local p = self.p
-  local track = p:tracks()[i]
-  if not track then return end
-  if self:confirm(("Remove \"%s\" from the index?"):format(track.title)) then
-    local ok, err = p:removeTrack(i)
-    p.message = ok and "Removed. Space is reused by the next recording."
-        or ("Could not remove: " .. tostring(err))
-  end
-  self.needsRedraw = true
-end
-
-function State:doAction(action, arg, clickX)
-  local p = self.p
-
-  if action == "toggle" then p:toggle()
-  elseif action == "next" then p:next(false)
-  elseif action == "prev" then p:prev()
-  elseif action == "stop" then p:stop()
-  elseif action == "shuffle" then p:toggleShuffle()
-  elseif action == "repeat" then p:cycleRepeat()
-  elseif action == "volume" then
-    -- Clicking cycles up in tenths and wraps round rather than muting.
-    p:setVolume(p.volume >= 0.999 and 0.1 or (p.volume + 0.1))
-  elseif action == "speed" then
-    local next = p.speed + 0.25
-    if next > 2.0 then next = 0.25 end
-    p:setSpeed(next)
-  elseif action == "add" then self:startDownload()
-  elseif action == "delete" then self:deleteTrack(arg)
-  elseif action == "view" then
-    self.view = arg
-    if arg == "library" then self:loadLibrary() end
-  elseif action == "select" then
-    -- First click selects, a second click on the same row acts on it.
-    local wasSelected = (self:sel() == arg)
-    self:sel(arg)
-    if wasSelected then self:activate() end
-  elseif action == "seek" then
-    local fraction = (clickX - arg.x) / math.max(1, arg.width - 1)
-    if p.state ~= "stopped" then
-      p.tape:seekWithinTrack(p:duration() * fraction)
-    end
-  end
-  self.needsRedraw = true
-end
-
---- Act on the highlighted row: play it, or record it onto the tape.
-function State:activate()
-  if self.view == "library" then
-    local entry = (self.library or {})[self:sel()]
-    if not entry then return end
-    local job, err = self.p:downloadFromCatalog(entry)
-    if not job then
-      self.p.message = "Cannot record: " .. tostring(err)
+function State:doAction(action)
+  local deck = self.deck
+  if action == "toggle" then
+    if deck:isPlaying() then
+      deck:stop()
     else
-      self.p.message = "Recording " .. entry.title .. " ..."
-      self.view = "queue"
+      if deck:atEnd() then deck:rewind() end
+      deck:setSpeed(1.0)
+      deck:setVolume(self.cfg.volume)
+      deck:play()
     end
-  else
-    if self.p:tracks()[self:sel()] then self.p:playTrack(self:sel()) end
+  elseif action == "rewind" then deck:rewind()
+  elseif action == "record" then self:startRecording()
+  elseif action == "label" then self:setLabel()
+  elseif action == "server" then self:setServer()
+  elseif action == "cancel" then
+    if self.job then
+      self.job:cancel()
+      self.job = nil
+      self.message = "Recording cancelled."
+    end
+  elseif action == "volume" then
+    self.cfg.volume = self.cfg.volume >= 0.999 and 0.1 or (self.cfg.volume + 0.1)
+    deck:setVolume(self.cfg.volume)
+    config.save(self.cfg)
   end
-end
-
-function State:runUpdate()
-  local update = require("mplayer.update")
-  local p = self.p
-  p.message = "Checking for updates..."
-  self:draw()
-
-  local result, detail = update.run(nil, function(done, total, label)
-    fill(1, h - 1, w, 1, T.bg)
-    write(2, h - 1, pad(("[%d/%d] %s"):format(done, total, label), w - 2), T.dim)
-  end)
-
-  if result == "updated" then
-    p.message = "Updated to " .. tostring(detail)
-      .. " - close and reopen the app. The header shows the running version."
-  elseif result == "current" then
-    p.message = "Already up to date (" .. tostring(detail) .. ")."
-  else
-    p.message = "Update failed: " .. tostring(detail)
-  end
+  self.needsRedraw = true
 end
 
 function State:onKey(char, code)
-  local p = self.p
-
-  -- View-specific keys first, so they can shadow the global ones.
-  if code == 15 then                                   -- tab
-    self.view = (self.view == "queue") and "library" or "queue"
-    if self.view == "library" then self:loadLibrary() end
-    self.needsRedraw = true
-    return
-  elseif char == 117 or char == 85 then                -- u
-    self:runUpdate()
-    self.needsRedraw = true
-    return
-  elseif char == 99 or char == 67 then                 -- c
-    self:configure()
-    self.needsRedraw = true
-    return
-  elseif char == 103 or char == 71 then                -- g: diagnostics
-    self:diagnose()
-    self.needsRedraw = true
-    return
-  elseif self.view == "library" then
-    if char == 114 or char == 82 then                  -- r: refresh the list
-      self:loadLibrary(true)
-    elseif code == 28 then                             -- enter: record
-      self:activate()
-    elseif code == 200 then self:sel(self:sel() - 1)
-    elseif code == 208 then self:sel(self:sel() + 1)
-    elseif code == 201 then self:sel(self:sel() - self:listHeight())
-    elseif code == 209 then self:sel(self:sel() + self:listHeight())
-    elseif char == 113 or char == 81 then self.running = false
-    elseif char == 120 or char == 88 then                -- x: cancel recording
-      if p.job then
-        p.job:cancel(); p.job = nil
-        p.message = "Recording cancelled."
-      end
-    elseif code == 57 then p:toggle()
-    end
-    self.needsRedraw = true
-    return
-  end
-
-  if code == 57 then p:toggle()                       -- space
-  elseif char == 110 or char == 78 then p:next(false) -- n
-  elseif char == 112 or char == 80 then p:prev()      -- p
-  elseif char == 115 or char == 83 then p:toggleShuffle()
-  elseif char == 114 or char == 82 then p:cycleRepeat()
-  elseif char == 97 or char == 65 then self:startDownload()
-  elseif char == 100 or char == 68 then self:deleteTrack(self:sel())
-  elseif char == 113 or char == 81 then self.running = false
-  elseif char == 43 or char == 61 then p:nudgeVolume(0.05)   -- + / =
-  elseif char == 45 then p:nudgeVolume(-0.05)                -- -
-  elseif char == 91 then p:setSpeed(p.speed - 0.25)          -- [
-  elseif char == 93 then p:setSpeed(p.speed + 0.25)          -- ]
-  elseif char == 119 or char == 87 then                      -- w
-    if self:confirm("Clear the whole track index on this tape?") then
-      p:wipe()
-      p.message = "Index cleared."
-    end
-  elseif code == 200 then self:sel(self:sel() - 1)           -- up
-  elseif code == 208 then self:sel(self:sel() + 1)           -- down
-  elseif code == 201 then self:sel(self:sel() - self:listHeight()) -- page up
-  elseif code == 209 then self:sel(self:sel() + self:listHeight()) -- page down
-  elseif code == 28 then self:activate()                     -- enter
-  elseif code == 205 then p:skip(5)                          -- right
-  elseif code == 203 then p:skip(-5)                         -- left
+  if code == 57 then self:doAction("toggle")                 -- space
+  elseif char == 119 or char == 87 then self:doAction("rewind")
+  elseif char == 114 or char == 82 then self:doAction("record")
+  elseif char == 108 or char == 76 then self:doAction("label")
+  elseif char == 115 or char == 83 then self:doAction("server")
+  elseif char == 120 or char == 88 then self:doAction("cancel")
+  elseif char == 43 or char == 61 then                       -- + / =
+    self.cfg.volume = math.min(1, self.cfg.volume + 0.05)
+    self.deck:setVolume(self.cfg.volume); config.save(self.cfg)
+  elseif char == 45 then                                     -- -
+    self.cfg.volume = math.max(0, self.cfg.volume - 0.05)
+    self.deck:setVolume(self.cfg.volume); config.save(self.cfg)
   elseif code == 63 then                                     -- F5
-    p:refresh()
-    p.message = p.tape.ready and "Tape re-read." or "No tape in the drive."
-  elseif char == 120 or char == 88 then                      -- x
-    if p.job then
-      p.job:cancel()
-      p.job = nil
-      p.message = "Recording cancelled."
-    end
+    self.deck:refresh()
+    self.message = self.deck.ready and "Cassette re-read." or "No cassette in the drive."
+  elseif char == 113 or char == 81 then self.running = false
   end
   self.needsRedraw = true
 end
 
 -- Main loop --------------------------------------------------------------
 
---- Run the interface until the user quits.
-function ui.run(p)
+function ui.run(deck)
   refreshSize()
   local previousBg, previousFg = gpu.getBackground(), gpu.getForeground()
-  local state = newState(p)
 
-  if p:trackCount() > 0 then state:sel(1) end
+  local state = setmetatable({
+    deck = deck,
+    cfg = config.load(),
+    hits = {},
+    job = nil,
+    message = nil,
+    needsRedraw = true,
+    running = true,
+  }, State)
+
+  deck:setVolume(state.cfg.volume)
   state:draw()
 
   local lastTick = 0
   while state.running do
-    -- Pump playback / downloads, then repaint if anything moved. A recording
-    -- that finishes changes state without any input, so notice that here or
-    -- the screen sits on "Recording..." until the user presses something.
-    local hadJob = p.job ~= nil
-    local wasState = p.state
-    p:update()
-    if (p.job ~= nil) ~= hadJob or p.state ~= wasState then
-      state.needsRedraw = true
+    -- Pump a recording, and notice when it ends: that changes the screen with
+    -- no input at all, so without this it would sit on "Recording..." until a
+    -- key was pressed.
+    if state.job then
+      local result = state.job:step()
+      if result == "done" then
+        state.message = ("Recorded %s. Give it a label with L."):format(clock(state.job:seconds()))
+        state.job = nil
+        deck:refresh()
+        state.needsRedraw = true
+      elseif result == "error" then
+        state.message = "Recording failed: " .. tostring(state.job.error)
+        state.job = nil
+        state.needsRedraw = true
+      else
+        state.message = state.job:status()
+      end
     end
 
     local now = rt.uptime()
@@ -833,45 +339,30 @@ function ui.run(p)
       state:draw()
       state.needsRedraw = false
       lastTick = now
-    elseif p.state == "playing" or p.job then
-      -- Cheap partial refresh of the transport line only.
-      if now - lastTick >= 0.25 then
-        state:drawNowPlaying()
-        lastTick = now
-      end
+    elseif (state.job or deck:isPlaying()) and now - lastTick >= 0.25 then
+      state:draw()
+      lastTick = now
     end
 
-    local timeout = p:timeUntilUpdate()
-    if timeout <= 0 then timeout = 0.05 end
-    if timeout > 0.25 then timeout = 0.25 end
-
-    -- touch:    name, address, x, y, button
-    -- key_down: name, address, char, code
-    -- scroll:   name, address, x, y, direction
-    local event, _, b, c, d = rt.pull(timeout)
+    local event, _, b, c = rt.pull(state.job and 0.05 or 0.25)
     if event == "key_down" then
       state:onKey(b, c)
     elseif event == "touch" then
       local hit = state:findHit(b, c)
-      if hit then state:doAction(hit.action, hit.arg, b) end
-    elseif event == "scroll" then
-      state:scr(state:scr() - (d or 0) * 2)
-      state.needsRedraw = true
+      if hit then state:doAction(hit.action) end
     elseif event == "screen_resized" or event == "refresh" then
-      refreshSize()
       state.needsRedraw = true
     elseif event == "interrupted" then
       state.running = false
     end
   end
 
-  p:close()
+  if state.job then state.job:cancel() end
   gpu.setBackground(previousBg)
   gpu.setForeground(previousFg)
   gpu.fill(1, 1, w, h, " ")
 
-  -- Under NgOS this does not return: the kernel closes us. Under OpenOS it is
-  -- a no-op and control goes back to the shell.
+  -- Under NgOS this does not return: the kernel closes us.
   rt.close()
 end
 

@@ -40,13 +40,9 @@ BYTES_PER_SECOND = 4096
 APP_FILES = [
     "app.lua",
     "mplayer/rt.lua",
-    "mplayer/repo.lua",
+    "mplayer/config.lua",
     "mplayer/tape.lua",
-    "mplayer/download.lua",
-    "mplayer/catalog.lua",
-    "mplayer/diag.lua",
-    "mplayer/player.lua",
-    "mplayer/update.lua",
+    "mplayer/record.lua",
     "mplayer/ui.lua",
 ]
 
@@ -182,7 +178,7 @@ def update_apps_tbl(owner: str, repo: str, branch: str) -> bool:
         "  {\n"
         f'    id = "{APP}",\n'
         f'    name = "{APP}",\n'
-        '    desc = "Tape drive music player with a download queue",\n'
+        '    desc = "Tape player: record a song onto a cassette and play it",\n'
         f'    manifest = "{manifest_url}"\n'
         "  }"
     )

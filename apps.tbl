@@ -14,7 +14,7 @@
   {
     id = "Music",
     name = "Music",
-    desc = "Tape drive music player with a download queue",
+    desc = "Tape player: record a song onto a cassette and play it",
     manifest = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/manifest.tbl"
   }
 }
