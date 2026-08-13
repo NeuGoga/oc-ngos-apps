@@ -132,7 +132,15 @@ python tools/make_manifest.py --version 1.1.0 --skip-catalog
 git add -A && git commit -m "Music 1.1.0" && git push
 ```
 
-In game, press **U** inside the app or run `music update`. It compares the
+In game, press **U** inside the app or run `music update`, then **close and
+reopen the app**. The header shows the running version — if it has not changed,
+the update has not taken effect.
+
+> NgOS runs every app in one Lua state and nothing ever clears
+> `package.loaded`. Before 1.0.10 an update wrote the new files, updated
+> `version.txt` so it reported success, and then went on running the modules
+> already cached — only rebooting the computer picked it up. The updater now
+> drops its own cached modules, so reopening the app is enough. It compares the
 manifest version against `/apps/Music/version.txt`, and downloads and verifies
 everything **before** writing anything, so a failure halfway through cannot
 leave a half-updated app on disk.

@@ -1,5 +1,5 @@
 {
-  version = "1.0.9",
+  version = "1.0.10",
   files = {
     ["app.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/app.lua",
@@ -44,12 +44,12 @@
     ["mplayer/update.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/mplayer/update.lua",
       path = "Music/mplayer/update.lua",
-      sha256 = "f8d5aebdd9bab657e3b5850ade8f63a0eef88ce0053b2f1ff989981b6f9bb18e"
+      sha256 = "6a57514cb908e5d5b7eb8ef74bb677dd734bb84d26a1accd4a6d53a8a848675a"
     },
     ["mplayer/ui.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/mplayer/ui.lua",
       path = "Music/mplayer/ui.lua",
-      sha256 = "a090838d8a3b112a063f921af6a601ce2f68c0bdf514bb0711e75b8719aee47e"
+      sha256 = "f743af644316dbcbb0e0781adf72baf8239c801bf509d6f903d2f97ef994a60a"
     },
   },
   system = {

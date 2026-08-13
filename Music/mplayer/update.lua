@@ -153,6 +153,19 @@ function update.apply(manifest, cfg, progress)
   end
 
   writeVersion(manifest.version)
+
+  -- NgOS runs every app in one Lua state, and neither the kernel nor anything
+  -- else ever clears package.loaded. Without this, the new files sit on disk
+  -- while the old modules keep running: closing and reopening the app changes
+  -- nothing, version.txt reports the new version, and only rebooting the
+  -- computer actually picks the update up. Dropping the cache makes reopening
+  -- the app enough.
+  for name in pairs(package.loaded) do
+    if name:sub(1, 8) == "mplayer." then
+      package.loaded[name] = nil
+    end
+  end
+
   return true, total
 end
 

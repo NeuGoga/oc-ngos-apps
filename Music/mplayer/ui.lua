@@ -12,6 +12,12 @@ local download = require("mplayer.download")
 
 local ui = {}
 
+-- Stamped by tools/make_manifest.py at release time. Baked into the source on
+-- purpose rather than read from version.txt: that file records what was last
+-- downloaded, this records what is actually executing, and when a stale module
+-- is still cached those are not the same thing.
+local VERSION = "1.0.10" --[[VERSION]]
+
 local gpu = component.gpu
 
 local T = {
@@ -158,8 +164,9 @@ function State:draw()
   local label = p.tape.ready and (p.tape.label ~= "" and p.tape.label or "unlabelled tape")
       or "no tape"
   write(2, 1, "TAPE", T.accent, T.panel)
+  write(7, 1, VERSION, T.dim, T.panel)
 
-  local x = 7
+  local x = 8 + #VERSION
   for _, tab in ipairs({ { "queue", "Queue" }, { "library", "Library" } }) do
     local active = self.view == tab[1]
     local text = " " .. tab[2] .. " "
@@ -706,7 +713,8 @@ function State:runUpdate()
   end)
 
   if result == "updated" then
-    p.message = "Updated to " .. tostring(detail) .. ". Restart the app to load it."
+    p.message = "Updated to " .. tostring(detail)
+      .. " - close and reopen the app. The header shows the running version."
   elseif result == "current" then
     p.message = "Already up to date (" .. tostring(detail) .. ")."
   else

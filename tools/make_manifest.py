@@ -79,7 +79,24 @@ def lua_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def stamp_version(version: str) -> None:
+    """Bake the version into ui.lua so the app can show what is running.
+
+    Must run before hashing, or the manifest would record the hash of the
+    unstamped file and the updater would reject its own release.
+    """
+    path = ROOT / APP / "mplayer" / "ui.lua"
+    text = path.read_text(encoding="utf-8")
+    marker = re.compile(r'local VERSION = "[^"]*" --\[\[VERSION\]\]')
+    if not marker.search(text):
+        sys.exit("Could not find the VERSION marker in Music/mplayer/ui.lua")
+    stamped = marker.sub(f'local VERSION = "{version}" --[[VERSION]]', text)
+    if stamped != text:
+        path.write_text(stamped, encoding="utf-8")
+
+
 def build_manifest(owner: str, repo: str, branch: str, version: str) -> str:
+    stamp_version(version)
     lines = ["{", f'  version = {lua_string(version)},', "  files = {"]
 
     missing = []
