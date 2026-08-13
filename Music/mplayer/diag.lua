@@ -135,6 +135,16 @@ function diag.report(cfg, index)
       add(lines, ("  \"%s\" is not recorded on this tape yet"):format(entry.title))
       add(lines, "  (record it, then run this again)")
     else
+      add(lines, "  index as stored on the tape:")
+      local rawIndex = deck:rawIndex()
+      if rawIndex then
+        for line in rawIndex:gmatch("[^\n]+") do
+          add(lines, "    |" .. line)
+        end
+      else
+        add(lines, "    (could not read it)")
+      end
+
       local SAMPLE = 4096
       add(lines, ("  track at byte %d, length %d, rate %d")
         :format(track.start, track.length, track.rate or 32768))

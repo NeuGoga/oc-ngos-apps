@@ -16,7 +16,7 @@ local ui = {}
 -- purpose rather than read from version.txt: that file records what was last
 -- downloaded, this records what is actually executing, and when a stale module
 -- is still cached those are not the same thing.
-local VERSION = "1.1.1" --[[VERSION]]
+local VERSION = "1.1.2" --[[VERSION]]
 
 local gpu = component.gpu
 
@@ -818,8 +818,15 @@ function ui.run(p)
 
   local lastTick = 0
   while state.running do
-    -- Pump playback / downloads, then repaint if anything moved.
+    -- Pump playback / downloads, then repaint if anything moved. A recording
+    -- that finishes changes state without any input, so notice that here or
+    -- the screen sits on "Recording..." until the user presses something.
+    local hadJob = p.job ~= nil
+    local wasState = p.state
     p:update()
+    if (p.job ~= nil) ~= hadJob or p.state ~= wasState then
+      state.needsRedraw = true
+    end
 
     local now = rt.uptime()
     if state.needsRedraw then

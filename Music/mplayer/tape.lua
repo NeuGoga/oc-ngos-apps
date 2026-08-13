@@ -211,6 +211,11 @@ function Tape:readIndex()
       end
       if start then
         start, length = tonumber(start), tonumber(length)
+        -- Only rates the drive can actually play are trusted. A bad value
+        -- here would set the speed to something absurd -- 10240 asks for
+        -- 0.3125x, which clamps to the drive's 0.25 minimum and turns music
+        -- into a slurred mess -- so anything unrecognised falls back.
+        if rate ~= 32768 and rate ~= 65536 then rate = NATIVE_RATE end
         local rest = title
         if start + length <= self:capacity() + 1 then
           self.tracks[#self.tracks + 1] = {
@@ -225,6 +230,16 @@ function Tape:readIndex()
     end
   end
   return self.tracks
+end
+
+--- The index exactly as it sits on the tape, for diagnostics.
+function Tape:rawIndex()
+  if not self.ready or self.size <= INDEX_SIZE then return nil end
+  if self:state() == "PLAYING" then self.drive.stop() end
+  self:seekTo(self:indexOffset())
+  local raw = self.drive.read(INDEX_SIZE)
+  if not raw then return nil end
+  return (raw:gsub("\0+$", ""))
 end
 
 --- Persist the table of contents back onto the tape.

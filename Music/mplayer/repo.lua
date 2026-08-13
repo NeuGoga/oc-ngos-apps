@@ -150,7 +150,8 @@ function repo.httpGet(url, headers, timeout)
   end
 
   local code, message = handle.response()
-  if code and code ~= 200 then
+  -- 206 is a success: it is what a Range request is supposed to return.
+  if code and code ~= 200 and code ~= 206 then
     pcall(handle.close)
     if code == 404 then
       return nil, "404 not found (wrong path, branch, or the token cannot see this repo)"
