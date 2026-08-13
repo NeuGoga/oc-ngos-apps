@@ -10,5 +10,11 @@
     name = "Files",
     desc = "File Explorer",
     manifest = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Files/manifest.tbl"
+  },
+  {
+    id = "Music",
+    name = "Music",
+    desc = "Tape drive music player with a download queue",
+    manifest = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/manifest.tbl"
   }
 }
