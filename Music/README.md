@@ -61,7 +61,13 @@ installs apps, plus `/usr/bin/music.lua` and `/etc/mplayer/repo.tbl`.
 ## Installing
 
 **From the NgOS app store** — open Store on the desktop, pick **Music**,
-Install. That gets you the desktop app.
+Install. Then open Music and press **C** to enter the repository holding your
+songs.
+
+The store installs the app files only; it ignores the manifest's `system`
+block, so there is no `music` shell command after a store install. Press **U**
+inside the app once and it will add that too, since the updater does honour
+`system`.
 
 **Or with the shell installer**, which also sets up the `music` command and
 the configuration in one go:
@@ -136,8 +142,9 @@ Checksums are sha256 over the file content after `gsub("
 stripping trailing whitespace — byte-identical to what `/ngos/bin/store.lua`
 computes, so `manifest.tbl` works for both the store and the in-app updater.
 
-> The store installs the app files only; it ignores the `system` block that
-> puts `music` on the PATH. Use `bootstrap` if you want the shell command.
+> The store ignores the `system` block that puts `music` on the PATH, but the
+> updater does not — so pressing **U** after a store install adds the shell
+> command.
 
 ---
 
@@ -220,6 +227,7 @@ You want `tape_drive` and `internet`.
 | `S` | shuffle |
 | `-` `+` | volume |
 | `[` `]` | tape speed 0.25×–2× (pitch and tempo together) |
+| `C` | set the song repository and access token |
 | `U` | update the app from the repository |
 | `W` | clear the whole track index |
 | `F5` | re-read the tape after swapping it |

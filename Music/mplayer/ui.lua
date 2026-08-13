@@ -117,7 +117,7 @@ function State:loadLibrary(force)
   local songs = repo.songs(cfg)
   if not repo.configured(songs) then
     self.library, self.libraryError =
-      {}, "No song repository configured. Run: music setup"
+      {}, "No song repository set yet. Press C to enter it."
     return
   end
 
@@ -342,7 +342,7 @@ end
 function State:drawLibrary(top, height)
   if self.libraryError then
     write(3, top + 1, pad(self.libraryError, w - 4), T.err)
-    write(3, top + 3, "R re-fetches the list.", T.dim)
+    write(3, top + 3, "C sets the repository.   R re-fetches the list.", T.dim)
     return
   end
   local items = self.library or {}
@@ -403,9 +403,9 @@ function State:drawFooter()
   if p.job then
     hints = "ESC cancel download"
   elseif self.view == "library" then
-    hints = "TAB queue  ENTER record to tape  R refresh  U update app  Q quit   (* on tape  ! too big)"
+    hints = "TAB queue  ENTER record  R refresh  C repository  U update  Q quit   (* on tape  ! too big)"
   else
-    hints = "SPACE play/pause  N/P track  ENTER play  TAB library  D delete  A URL  S shuffle  R repeat  Q quit"
+    hints = "SPACE play/pause  N/P track  ENTER play  TAB library  D delete  A URL  S shuffle  R repeat  C setup  Q quit"
   end
   write(2, h, pad(hints, w - 2), T.dim, T.panel)
 end
@@ -413,7 +413,8 @@ end
 -- Modal input ------------------------------------------------------------
 
 --- Draw a centred box and read a line of text. Returns nil if cancelled.
-function State:readLine(title, initial)
+--- Modal line editor. `secret` masks the text, for access tokens.
+function State:readLine(title, initial, secret)
   local boxWidth = math.min(w - 6, 70)
   local x = math.floor((w - boxWidth) / 2)
   local y = math.floor(h / 2) - 2
@@ -426,7 +427,8 @@ function State:readLine(title, initial)
     write(x + 2, y + 1, title, T.accent, T.panel)
 
     local inner = boxWidth - 4
-    local view = text
+    local shown = secret and string.rep("*", unicode.len(text)) or text
+    local view = shown
     local offset = 0
     if unicode.len(view) >= inner then
       offset = unicode.len(view) - inner + 1
@@ -437,8 +439,8 @@ function State:readLine(title, initial)
 
     local cursorX = x + 2 + (cursor - 1 - offset)
     if cursorX >= x + 2 and cursorX < x + 2 + inner then
-      write(cursorX, y + 2, unicode.sub(text, cursor, cursor) ~= "" and unicode.sub(text, cursor, cursor) or " ",
-        T.black, T.accent)
+      local under = unicode.sub(shown, cursor, cursor)
+      write(cursorX, y + 2, under ~= "" and under or " ", T.black, T.accent)
     end
     write(x + 2, y + 3, "ENTER confirm    ESC cancel", T.dim, T.panel)
 
@@ -498,6 +500,53 @@ function State:confirm(question)
 end
 
 -- Actions ----------------------------------------------------------------
+
+--- Configure the song repository from inside the app.
+-- The NgOS store installs the app files only; it ignores the manifest's
+-- `system` block, so a store install has no `music` command to run setup
+-- with. This is the way in for those installs.
+function State:configure()
+  local repo = require("mplayer.repo")
+  local cfg = repo.load()
+
+  local owner = self:readLine("Songs: GitHub user", cfg.songsOwner ~= "" and cfg.songsOwner or cfg.owner)
+  self.needsRedraw = true
+  if not owner then return end
+
+  local name = self:readLine("Songs: repository", cfg.songsName ~= "" and cfg.songsName or cfg.name)
+  self.needsRedraw = true
+  if not name then return end
+
+  local branch = self:readLine("Songs: branch", cfg.songsBranch ~= "" and cfg.songsBranch or "main")
+  self.needsRedraw = true
+  if not branch then return end
+
+  local token = self:readLine("Songs: access token (blank if public)", cfg.songsToken or "", true)
+  self.needsRedraw = true
+  if not token then return end
+
+  cfg.songsOwner = owner:match("^%s*(.-)%s*$")
+  cfg.songsName = name:match("^%s*(.-)%s*$")
+  cfg.songsBranch = branch:match("^%s*(.-)%s*$")
+  cfg.songsToken = token:match("^%s*(.-)%s*$")
+
+  local ok, err = repo.save(cfg)
+  if not ok then
+    self.p.message = "Could not save: " .. tostring(err)
+    return
+  end
+
+  self.p.message = "Saved to " .. repo.CONFIG_FILE .. " - fetching the song list..."
+  self:draw()
+
+  self.view = "library"
+  self:loadLibrary(true)
+  if self.libraryError then
+    self.p.message = "Saved, but: " .. self.libraryError
+  else
+    self.p.message = ("Saved. %d song(s) available."):format(#(self.library or {}))
+  end
+end
 
 function State:startDownload()
   local p = self.p
@@ -623,6 +672,10 @@ function State:onKey(char, code)
     return
   elseif char == 117 or char == 85 then                -- u
     self:runUpdate()
+    self.needsRedraw = true
+    return
+  elseif char == 99 or char == 67 then                 -- c
+    self:configure()
     self.needsRedraw = true
     return
   elseif self.view == "library" then
