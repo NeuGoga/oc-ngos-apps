@@ -1,17 +1,13 @@
 -- mplayer.repo -- talking to the GitHub repository this app lives in.
 --
 -- Holds the repo coordinates plus an optional token, and does blocking HTTP
--- fetches. Two URL shapes are supported:
+-- fetches. One URL shape, public or private:
 --
---   public  https://raw.githubusercontent.com/<owner>/<name>/<branch>/<path>
---   private https://api.github.com/repos/<owner>/<name>/contents/<path>?ref=<branch>
---           with  Authorization: token <pat>
---                 Accept: application/vnd.github.raw
+--   https://raw.githubusercontent.com/<owner>/<name>/<branch>/<path>
+--   plus, when private:  Authorization: token <pat>
 --
--- The API form returns the raw bytes for files up to 100 MB, which covers
--- both the Lua sources and the .dfpwm music. Custom headers need
--- `enableHttpHeaders` left on in the OpenComputers config; it is on by
--- default.
+-- Custom headers need `enableHttpHeaders` left on in the OpenComputers
+-- config; it is on by default.
 
 local component = require("component")
 local computer = require("computer")

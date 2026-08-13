@@ -90,21 +90,21 @@ cf:close()
 
 local private = cfg.token ~= ""
 
+-- The raw host serves private repositories too, given an Authorization
+-- header, and unlike the contents API it is a real file server.
 local function url(path)
-  if private then
-    return ("https://api.github.com/repos/%s/%s/contents/%s?ref=%s")
-      :format(cfg.owner, cfg.name, path, cfg.branch)
-  end
+  -- Spaces and accents are not legal in a URL. Explicit ASCII ranges rather
+  -- than %w, whose meaning for bytes above 127 depends on the C locale.
+  local encoded = path:gsub("[^A-Za-z0-9%-%._~/]", function(c)
+    return ("%%%02X"):format(c:byte())
+  end)
   return ("https://raw.githubusercontent.com/%s/%s/%s/%s")
-    :format(cfg.owner, cfg.name, cfg.branch, path)
+    :format(cfg.owner, cfg.name, cfg.branch, encoded)
 end
 
 local function headers()
   if not private then return nil end
-  return {
-    ["Authorization"] = "token " .. cfg.token,
-    ["Accept"] = "application/vnd.github.raw",
-  }
+  return { ["Authorization"] = "token " .. cfg.token }
 end
 
 local function httpGet(path)
