@@ -14,14 +14,20 @@
 --   * read(n) returns nil at end of stream, and "" when the connection is
 --     alive but no bytes have arrived yet.
 --   * read() and the tape's write() are both non-direct calls, so each one
---     costs roughly a game tick. Several chunks per step amortise that.
+--     costs roughly a game tick, and read is clamped to maxReadBuffer -- 2 KB
+--     by default. Reads are therefore batched and committed in one write.
 --
--- The card fills its response queue from a background thread and only sets
--- its end-of-stream flag when that thread finishes cleanly. If the connection
--- drops mid-transfer, the flag is never set: read() then returns "" forever
--- and the download simply hangs at whatever percentage it reached. So a
--- transfer that goes quiet is treated as broken and resumed with a Range
--- request rather than waited on.
+-- The card fills its response queue from a background thread and only raises
+-- end-of-stream when that thread finishes cleanly. Two consequences shape
+-- this module:
+--
+--   * A connection that drops mid-transfer never sets the flag, so read()
+--     returns "" forever and a naive loop hangs at whatever percentage it
+--     reached. A transfer that goes quiet is treated as broken and resumed
+--     with a Range request.
+--   * A keep-alive connection may never close even after sending everything,
+--     so end-of-stream cannot be the only completion signal. Content-Length
+--     is what actually finishes a transfer.
 
 local component = require("component")
 local computer = require("computer")
@@ -31,14 +37,24 @@ local download = {}
 local Job = {}
 Job.__index = Job
 
--- Capped by OC's maxReadBuffer setting anyway; asking for more is harmless.
+-- OpenComputers clamps every read to `maxReadBuffer`, which defaults to 2048
+-- bytes, and read() is not a direct call -- so one read costs a game tick and
+-- returns at most 2 KB. That puts a hard ceiling of about 40 KB/s on any
+-- transfer, and it is only reachable by keeping reads back to back.
+--
+-- Asking for more than the clamp is harmless, so ask for a comfortable amount
+-- in case a pack raises the setting.
 local CHUNK = 8192
--- Each read and each write costs a tick, so batching cuts the per-chunk
--- overhead. Keep it small enough that the interface stays responsive.
-local CHUNKS_PER_STEP = 4
--- How long a silent connection is given before it is considered dead.
-local STALL_SECONDS = 12
-local MAX_ATTEMPTS = 4
+-- Reads per pass. Writing is also non-direct, so the reads are accumulated in
+-- memory and committed in one write: 16 reads plus 1 write moves ~32 KB in 17
+-- ticks, where read-then-write per chunk managed 8 KB in 8 ticks.
+local READS_PER_STEP = 16
+local FLUSH_BYTES = 32768
+-- How long a silent connection is given before it is considered dead. Gaps of
+-- a few seconds are normal when the card's queue runs dry, so this is
+-- generous; a needless reconnect costs more than waiting.
+local STALL_SECONDS = 20
+local MAX_ATTEMPTS = 6
 
 function download.available()
   return component.isAvailable("internet")
@@ -104,6 +120,9 @@ function download.start(tapeObj, url, title, headers)
     resuming = false,
     lastByteAt = computer.uptime(),
     startedAt = computer.uptime(),
+    sampleAt = computer.uptime(),
+    sampleBytes = 0,
+    rate = nil,
     note = nil,
   }, Job)
 end
@@ -118,6 +137,12 @@ end
 --- Reopen the connection from where we stopped. GitHub honours Range on both
 --- raw.githubusercontent.com and the contents API.
 function Job:_retry(reason)
+  -- Never reconnect for bytes that do not exist: a Range request past the end
+  -- of the file answers 416, which would look like a failure at 100%.
+  if self:_complete() then
+    return self:_finish()
+  end
+
   pcall(self.handle.close)
 
   if self.attempts >= MAX_ATTEMPTS then
@@ -194,42 +219,78 @@ function Job:step()
     return self:_connect()
   end
 
-  local moved = false
-  for _ = 1, CHUNKS_PER_STEP do
+  -- Gather several reads before touching the tape, so the write tick is paid
+  -- once per batch instead of once per 2 KB.
+  local parts, pending, failure, atEnd = {}, 0, nil, false
+
+  for _ = 1, READS_PER_STEP do
     local ok, chunk = pcall(self.handle.read, CHUNK)
     if not ok then
-      return self:_retry(tostring(chunk))
+      failure = tostring(chunk)
+      break
     end
     if chunk == nil then
-      return self:_finish()
+      atEnd = true
+      break
     end
     if #chunk == 0 then
       break -- alive, but nothing available this instant
     end
+    parts[#parts + 1] = chunk
+    pending = pending + #chunk
+    if pending >= FLUSH_BYTES then break end
+  end
 
+  -- Commit whatever arrived, even if the connection then failed: those bytes
+  -- are good and a resume should not fetch them twice.
+  if pending > 0 then
+    local data = table.concat(parts)
     local remaining = self.limit - self.written
-    if #chunk >= remaining then
-      chunk = chunk:sub(1, remaining)
+    if #data >= remaining then
+      data = data:sub(1, remaining)
       self.truncated = true
     end
-    if #chunk > 0 then
-      self.tape.drive.write(chunk)
+    if #data > 0 then
+      self.tape.drive.write(data)
       -- The drive's own position is the source of truth for how much landed.
       self.written = self.tape:position() - self.start
-      moved = true
     end
-    if self.written >= self.limit then
-      return self:_finish()
+    local now = computer.uptime()
+    self.lastByteAt = now
+    -- Sample a recent rate. The lifetime average is dragged down by every
+    -- stall and reconnect, which makes a healthy transfer look broken.
+    if now - self.sampleAt >= 2 then
+      self.rate = (self.written - self.sampleBytes) / (now - self.sampleAt)
+      self.sampleAt, self.sampleBytes = now, self.written
     end
   end
 
-  if moved then
-    self.lastByteAt = computer.uptime()
-  elseif computer.uptime() - self.lastByteAt > STALL_SECONDS then
+  if self:_complete() then
+    return self:_finish()
+  end
+  if atEnd then
+    return self:_finish()
+  end
+  if failure then
+    return self:_retry(failure)
+  end
+  if pending == 0 and computer.uptime() - self.lastByteAt > STALL_SECONDS then
     return self:_retry(("stalled for %ds"):format(STALL_SECONDS))
   end
 
   return self.state
+end
+
+--- Have we got everything we are ever going to get?
+--
+-- This matters more than it looks. The card only reports end-of-stream when
+-- its background reader sees the socket close, and a keep-alive connection
+-- may never close -- so waiting for that alone can hang at 100%, then "resume"
+-- past the end of the file forever. Content-Length is the reliable signal.
+function Job:_complete()
+  if self.written >= self.limit then return true end
+  local target = self.total and math.min(self.total, self.limit) or nil
+  return target ~= nil and self.written >= target
 end
 
 function Job:_finish()
@@ -276,13 +337,20 @@ function Job:status()
   end
 
   local elapsed = computer.uptime() - self.startedAt
-  local rate = elapsed > 0.5 and (self.written / elapsed) or nil
+  local rate = self.rate or (elapsed > 1 and (self.written / elapsed) or nil)
   local line = "Recording " .. formatSize(self.written)
-  if self.total then
-    line = line .. " of " .. formatSize(math.min(self.total, self.limit))
+  local target = self.total and math.min(self.total, self.limit) or nil
+  if target then
+    line = line .. " of " .. formatSize(target)
   end
-  if rate then
+  if rate and rate > 0 then
     line = line .. (" at %s/s"):format(formatSize(rate))
+    if target then
+      local left = (target - self.written) / rate
+      if left > 1 then
+        line = line .. (", %d:%02d left"):format(left // 60, math.floor(left % 60))
+      end
+    end
   end
   local quiet = computer.uptime() - self.lastByteAt
   if quiet > 3 then

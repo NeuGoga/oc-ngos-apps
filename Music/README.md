@@ -284,9 +284,16 @@ a tape gets patchy.
 - **Pause is stop.** The drive has no pause; stopping keeps the head position,
   so stop-then-play resumes exactly where it was.
 - **Recording stops playback** — both use the single tape head.
-- **Transfers run about 80 KB/s.** `internet.read` and `tape.write` are both
-  non-direct component calls costing roughly a game tick each, so several
-  chunks are moved per pass to amortise that.
+- **Transfers top out near 40 KB/s**, and that is a hard ceiling. `read` is a
+  non-direct call, so it costs a game tick, and OpenComputers clamps it to
+  `maxReadBuffer` — 2 KB by default. Twenty ticks a second times 2 KB is the
+  whole budget. Reads are batched and committed to the tape in one write so
+  the write tick is not paid per chunk; a 3 minute song takes roughly half a
+  minute.
+- **A transfer finishes on Content-Length, not on end-of-stream.** The card
+  only raises end-of-stream when the socket closes, and a keep-alive
+  connection may never close — waiting for it alone hangs at 100%, then tries
+  to "resume" past the end of the file forever.
 - **A dropped connection resumes itself.** The internet card fills its response
   queue from a background thread and only raises end-of-stream when that
   thread finishes cleanly; if the connection dies mid-transfer the flag is
