@@ -229,6 +229,7 @@ You want `tape_drive` and `internet`.
 | `-` `+` | volume |
 | `[` `]` | tape speed 0.25×–2× (pitch and tempo together) |
 | `C` | set the song repository and access token |
+| `G` | connection report, when a recording misbehaves |
 | `U` | update the app from the repository |
 | `W` | clear the whole track index |
 | `F5` | re-read the tape after swapping it |
@@ -248,6 +249,7 @@ music add <url> [title]   record a .dfpwm URL onto the tape
 music library             songs hosted in the repository
 music get <n|name>        record one of them onto the tape
 music setup               reconfigure repository and token
+music diag [n]            probe the connection for song n
 music update              pull a newer version of the app
 music wipe                clear the tape's track index
 ```

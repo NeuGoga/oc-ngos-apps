@@ -406,9 +406,9 @@ function State:drawFooter()
   if p.job then
     hints = "X cancels the recording"
   elseif self.view == "library" then
-    hints = "TAB queue  ENTER record  R refresh  C repository  U update  Q quit   (* on tape  ! too big)"
+    hints = "TAB queue  ENTER record  R refresh  C repo  G diagnose  U update  Q quit   (* on tape)"
   else
-    hints = "SPACE play/pause  N/P track  ENTER play  TAB library  D delete  A URL  S shuffle  R repeat  C setup  Q quit"
+    hints = "SPACE play/pause  N/P track  ENTER play  TAB library  D delete  A URL  S shuffle  C setup  G diagnose  Q quit"
   end
   write(2, h, pad(hints, w - 2), T.dim, T.panel)
 end
@@ -551,6 +551,56 @@ function State:configure()
   end
 end
 
+--- Full screen connection report. NgOS boots straight into the desktop, so
+--- there is not necessarily a shell to run `music diag` from.
+function State:diagnose()
+  fill(1, 1, w, h, T.bg)
+  write(2, 1, "Probing the connection...", T.accent)
+
+  local ok, lines = pcall(function()
+    return require("mplayer.diag").report(nil, self.view == "library" and self:sel() or 1)
+  end)
+  if not ok then
+    lines = { "Diagnostics failed:", tostring(lines) }
+  end
+
+  local top = 0
+  while true do
+    fill(1, 1, w, h, T.bg)
+    fill(1, 1, w, 1, T.panel)
+    write(2, 1, "CONNECTION REPORT", T.accent, T.panel)
+    write(w - 26, 1, "up/down scroll   Q close", T.dim, T.panel)
+
+    local rows = h - 2
+    for row = 1, rows do
+      local line = lines[row + top]
+      if not line then break end
+      local colour = T.text
+      if line:match("^%u[%u ]+$") then colour = T.accent
+      elseif line:find("NO") or line:find("FAILED") or line:find("failed")
+          or line:find("rejected") or line:find("error") then colour = T.err
+      elseif line:sub(1, 4) == "    " then colour = T.dim end
+      write(2, row + 1, line, colour)
+    end
+
+    if #lines > rows then
+      write(2, h, ("line %d-%d of %d"):format(top + 1,
+        math.min(top + rows, #lines), #lines), T.dim, T.panel)
+    end
+
+    local event, _, char, code = rt.pull()
+    if event == "key_down" then
+      if code == 200 then top = math.max(0, top - 1)
+      elseif code == 208 then top = math.min(math.max(0, #lines - (h - 2)), top + 1)
+      elseif code == 201 then top = math.max(0, top - (h - 2))
+      elseif code == 209 then top = math.min(math.max(0, #lines - (h - 2)), top + (h - 2))
+      else return end
+    elseif event == "touch" then
+      return
+    end
+  end
+end
+
 function State:startDownload()
   local p = self.p
   if not download.available() then
@@ -679,6 +729,10 @@ function State:onKey(char, code)
     return
   elseif char == 99 or char == 67 then                 -- c
     self:configure()
+    self.needsRedraw = true
+    return
+  elseif char == 103 or char == 71 then                -- g: diagnostics
+    self:diagnose()
     self.needsRedraw = true
     return
   elseif self.view == "library" then

@@ -1,5 +1,5 @@
 {
-  version = "1.0.8",
+  version = "1.0.9",
   files = {
     ["app.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/app.lua",
@@ -31,6 +31,11 @@
       path = "Music/mplayer/catalog.lua",
       sha256 = "437cf8fc77f14881e8afca6a7d89aec119b042b78d2b64cad706fdee5bd6fcae"
     },
+    ["mplayer/diag.lua"] = {
+      url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/mplayer/diag.lua",
+      path = "Music/mplayer/diag.lua",
+      sha256 = "173b0d2f0580fd555311edeabbbc8e2a43ea92865e9597cd3258de69b2b80fe6"
+    },
     ["mplayer/player.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/mplayer/player.lua",
       path = "Music/mplayer/player.lua",
@@ -44,14 +49,14 @@
     ["mplayer/ui.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/mplayer/ui.lua",
       path = "Music/mplayer/ui.lua",
-      sha256 = "01821a2147e76ab93c57e1ff80cb78af0d42e5656a6c41912904b6c8ecc3e4ca"
+      sha256 = "a090838d8a3b112a063f921af6a601ce2f68c0bdf514bb0711e75b8719aee47e"
     },
   },
   system = {
     ["/usr/bin/music.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/cli.lua",
       path = "Music/cli.lua",
-      sha256 = "cc2182867047dcd7490e64ea6fc7361bc8b14e67676958a46694e2106d31e2b4"
+      sha256 = "f9f4e1f5cef6764d6ee7b2f9965202d8a99f8e60543bf2d2c0d44445058cf373"
     },
   }
 }

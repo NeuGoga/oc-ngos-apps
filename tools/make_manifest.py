@@ -44,6 +44,7 @@ APP_FILES = [
     "mplayer/tape.lua",
     "mplayer/download.lua",
     "mplayer/catalog.lua",
+    "mplayer/diag.lua",
     "mplayer/player.lua",
     "mplayer/update.lua",
     "mplayer/ui.lua",
