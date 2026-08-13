@@ -211,12 +211,15 @@ function Player:nudgeVolume(delta)
   return self:setVolume(self.volume + delta)
 end
 
---- Tape speed doubles as pitch/tempo; 1.0 is normal.
+--- Pitch multiplier on top of whatever speed the current track needs. A track
+--- recorded at 65536 Hz already plays at 2.0, the drive's maximum, so it
+--- cannot be pushed faster -- the clamp handles that quietly.
 function Player:setSpeed(v)
-  self.speed = self.tape:setSpeed(v)
-  -- Durations are derived from bytes, so they change with speed.
-  for _, track in ipairs(self.tape.tracks) do
-    track.duration = self.tape:bytesToSeconds(track.length)
+  self.speed = math.max(0.25, math.min(2.0, v))
+  self.tape.pitch = self.speed
+  local track = self:currentTrack()
+  if track then
+    self.tape:setSpeed(self.tape:speedFor(track.rate) * self.speed)
   end
   return self.speed
 end
@@ -239,11 +242,11 @@ end
 
 --- Start downloading a .dfpwm URL onto the end of the tape.
 -- @param headers optional auth headers (private repository)
-function Player:download(url, title, headers, expectedBytes)
+function Player:download(url, title, headers, expectedBytes, rate)
   if self.job then return nil, "a download is already running" end
   -- Recording writes to the tape head, so playback has to get out of the way.
   self:stop()
-  local job, err = download.start(self.tape, url, title, headers, expectedBytes)
+  local job, err = download.start(self.tape, url, title, headers, expectedBytes, rate)
   if not job then return nil, err end
   self.job = job
   return job
@@ -260,7 +263,7 @@ function Player:downloadFromCatalog(entry)
     return nil, "song repository is not configured (run: music setup)"
   end
   local url, headers = catalog.source(cfg, entry)
-  return self:download(url, entry.title, headers, entry.bytes)
+  return self:download(url, entry.title, headers, entry.bytes, entry.rate)
 end
 
 function Player:removeTrack(i)

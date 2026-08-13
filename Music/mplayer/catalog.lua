@@ -37,6 +37,7 @@ function catalog.fetch(cfg)
         file = entry.file,
         seconds = tonumber(entry.seconds),
         bytes = tonumber(entry.bytes),
+        rate = tonumber(entry.rate) or 32768,
       }
     end
   end

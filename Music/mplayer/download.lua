@@ -91,7 +91,7 @@ end
 --                and it is more trustworthy than a response header: it is
 --                what makes "have we got everything" answerable even if the
 --                card hands back headers we cannot read.
-function download.start(tapeObj, url, title, headers, expectedBytes)
+function download.start(tapeObj, url, title, headers, expectedBytes, rate)
   if not component.isAvailable("internet") then
     return nil, "no internet card installed"
   end
@@ -121,6 +121,7 @@ function download.start(tapeObj, url, title, headers, expectedBytes)
     written = 0,
     total = tonumber(expectedBytes),
     expected = tonumber(expectedBytes),
+    rate = tonumber(rate),
     state = "connecting",
     error = nil,
     truncated = false,
@@ -319,7 +320,7 @@ function Job:_finish()
   if self.written <= 0 then
     return self:_fail("the server sent no data")
   end
-  local ok, err = self.tape:addTrack(self.title, self.start, self.written)
+  local ok, err = self.tape:addTrack(self.title, self.start, self.written, self.rate)
   if not ok then
     return self:_fail(err or "could not update the tape index")
   end
@@ -344,7 +345,7 @@ end
 
 --- Seconds of audio written so far.
 function Job:seconds()
-  return self.tape:bytesToSeconds(self.written)
+  return self.tape:bytesToSeconds(self.written, self.rate)
 end
 
 --- A line describing what the transfer is doing, for the interface.

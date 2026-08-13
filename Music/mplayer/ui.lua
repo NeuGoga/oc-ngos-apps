@@ -16,7 +16,7 @@ local ui = {}
 -- purpose rather than read from version.txt: that file records what was last
 -- downloaded, this records what is actually executing, and when a stale module
 -- is still cached those are not the same thing.
-local VERSION = "1.0.10" --[[VERSION]]
+local VERSION = "1.1.0" --[[VERSION]]
 
 local gpu = component.gpu
 
@@ -336,12 +336,14 @@ function State:drawQueue(top, height)
     fill(1, y, w, 1, bg)
 
     local time = player.formatTime(track.duration)
-    local titleWidth = math.max(4, w - #time - 12)
+    local hq = (track.rate or 32768) > 32768
+    local titleWidth = math.max(4, w - #time - 15)
 
     write(2, y, (i == playing) and ">" or " ", T.accent, bg)
     write(4, y, ("%2d."):format(i), T.dim, bg)
     write(8, y, pad(track.title, titleWidth), fg, bg)
-    write(8 + titleWidth + 1, y, time, T.dim, bg)
+    if hq then write(8 + titleWidth + 1, y, "HQ", T.ok, bg) end
+    write(8 + titleWidth + 4, y, time, T.dim, bg)
     write(w - 1, y, "x", T.err, bg)
 
     self:hit(1, w - 3, y, "select", i)
@@ -379,7 +381,8 @@ function State:drawLibrary(top, height)
     fill(1, y, w, 1, bg)
 
     local time = entry.seconds and player.formatTime(entry.seconds) or "  ?  "
-    local titleWidth = math.max(4, w - #time - 14)
+    local hq = (entry.rate or 32768) > 32768
+    local titleWidth = math.max(4, w - #time - 17)
 
     local mark, fg
     if onTape[entry.title] then
@@ -393,7 +396,8 @@ function State:drawLibrary(top, height)
     write(2, y, mark, fg, bg)
     write(4, y, ("%2d."):format(i), T.dim, bg)
     write(8, y, pad(entry.title, titleWidth), fg, bg)
-    write(8 + titleWidth + 1, y, time, T.dim, bg)
+    if hq then write(8 + titleWidth + 1, y, "HQ", T.ok, bg) end
+    write(8 + titleWidth + 4, y, time, T.dim, bg)
 
     self:hit(1, w - 1, y, "select", i)
   end

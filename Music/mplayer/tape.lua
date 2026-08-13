@@ -31,8 +31,23 @@ Tape.__index = Tape
 local BYTES_PER_SECOND = 4096
 tape.BYTES_PER_SECOND = BYTES_PER_SECOND
 
+-- The drive declares its sample rate as packetSize * 8 * 4, where packetSize
+-- is round(1024 * speed) -- so the rate is not fixed, it scales with speed.
+-- At 1.0 that is 32768 Hz; at the maximum 2.0 it is 65536 Hz.
+--
+-- Which means a track encoded at 65536 Hz and played back at speed 2.0 comes
+-- out at the right pitch with twice the sample rate. On a one-bit format that
+-- is the single largest quality gain available. It costs twice the tape, so
+-- it is per track: each one records the rate it was encoded at.
+local NATIVE_RATE = 32768
+tape.NATIVE_RATE = NATIVE_RATE
+tape.RATES = { 32768, 65536 }
+
 local INDEX_SIZE = 2048
-local INDEX_MAGIC = "MPTAPE1"
+-- MPTAPE2 adds a per-track sample rate. MPTAPE1 tapes still read fine; they
+-- simply have no rate field and are assumed native.
+local INDEX_MAGIC = "MPTAPE2"
+local LEGACY_MAGIC = "MPTAPE1"
 
 tape.INDEX_SIZE = INDEX_SIZE
 
@@ -95,13 +110,20 @@ function Tape:free()
   return math.max(0, self:capacity() - self:used())
 end
 
---- Seconds of audio a byte count represents at the current speed.
-function Tape:bytesToSeconds(bytes)
-  return bytes / (BYTES_PER_SECOND * self.speed)
+--- Seconds of audio a byte count represents.
+-- A track plays at the speed its rate demands, so its own rate decides how
+-- fast bytes are consumed: one bit per sample, hence rate/8 bytes a second.
+function Tape:bytesToSeconds(bytes, rate)
+  return bytes / ((rate or NATIVE_RATE) / 8)
 end
 
-function Tape:secondsToBytes(seconds)
-  return math.floor(seconds * BYTES_PER_SECOND * self.speed)
+function Tape:secondsToBytes(seconds, rate)
+  return math.floor(seconds * ((rate or NATIVE_RATE) / 8))
+end
+
+--- The drive speed a track needs for correct pitch.
+function Tape:speedFor(rate)
+  return (rate or NATIVE_RATE) / NATIVE_RATE
 end
 
 --- Absolute seek, built from the drive's relative seek.
@@ -124,6 +146,8 @@ function Tape:state()
   return self.drive.getState()
 end
 
+--- Drive speed. Callers normally go through playTrack, which derives it from
+--- the track's rate; `pitch` is the user's own multiplier on top.
 function Tape:setSpeed(speed)
   speed = math.max(0.25, math.min(2.0, speed))
   if self.drive.setSpeed(speed) then
@@ -142,9 +166,9 @@ end
 --
 -- Text, newline separated, zero padded to INDEX_SIZE:
 --
---   MPTAPE1
+--   MPTAPE2
 --   <count>
---   <start> <length> <title>
+--   <start> <length> <rate> <title>
 --   ...
 
 function Tape:indexOffset()
@@ -169,21 +193,32 @@ function Tape:readIndex()
   local lines = {}
   for line in text:gmatch("[^\n]+") do lines[#lines + 1] = line end
 
-  if lines[1] ~= INDEX_MAGIC then return self.tracks end
+  local legacy = lines[1] == LEGACY_MAGIC
+  if lines[1] ~= INDEX_MAGIC and not legacy then return self.tracks end
 
   local count = tonumber(lines[2]) or 0
   for i = 1, count do
     local line = lines[2 + i]
     if line then
-      local start, length, title = line:match("^(%d+)%s+(%d+)%s*(.*)$")
+      -- v1: "start length title"   v2: "start length rate title"
+      local start, length, rate, title
+      if legacy then
+        start, length, title = line:match("^(%d+)%s+(%d+)%s*(.*)$")
+        rate = NATIVE_RATE
+      else
+        start, length, rate, title = line:match("^(%d+)%s+(%d+)%s+(%d+)%s*(.*)$")
+        rate = tonumber(rate) or NATIVE_RATE
+      end
       if start then
         start, length = tonumber(start), tonumber(length)
+        local rest = title
         if start + length <= self:capacity() + 1 then
           self.tracks[#self.tracks + 1] = {
             start = start,
             length = length,
-            title = (title ~= "" and title) or ("Track " .. i),
-            duration = self:bytesToSeconds(length),
+            rate = rate,
+            title = (rest ~= "" and rest) or ("Track " .. i),
+            duration = self:bytesToSeconds(length, rate),
           }
         end
       end
@@ -202,7 +237,9 @@ function Tape:writeIndex()
   for _, t in ipairs(self.tracks) do
     -- Titles must stay on one line and must not upset the parser.
     local title = t.title:gsub("[\n\r]", " "):sub(1, 64)
-    parts[#parts + 1] = ("%d %d %s"):format(t.start, t.length, title)
+    parts[#parts + 1] = ("%d %d %d %s"):format(
+      math.floor(t.start), math.floor(t.length),
+      math.floor(t.rate or NATIVE_RATE), title)
   end
 
   local text = table.concat(parts, "\n") .. "\n"
@@ -218,12 +255,14 @@ function Tape:writeIndex()
 end
 
 --- Append a track record. The audio must already have been written.
-function Tape:addTrack(title, start, length)
+function Tape:addTrack(title, start, length, rate)
+  rate = rate or NATIVE_RATE
   self.tracks[#self.tracks + 1] = {
     start = start,
     length = length,
+    rate = rate,
     title = title,
-    duration = self:bytesToSeconds(length),
+    duration = self:bytesToSeconds(length, rate),
   }
   return self:writeIndex() and #self.tracks
 end
@@ -253,6 +292,8 @@ function Tape:playTrack(i)
   local track = self.tracks[i]
   if not track then return nil, "no such track" end
   self.drive.stop()
+  -- A high rate track is only in tune at the speed it was encoded for.
+  self:setSpeed(self:speedFor(track.rate) * (self.pitch or 1))
   self:seekTo(track.start)
   self.playing = i
   if not self.drive.play() then
@@ -284,14 +325,14 @@ function Tape:trackPosition()
   local offset = self:position() - track.start
   if offset < 0 then offset = 0 end
   if offset > track.length then offset = track.length end
-  return self:bytesToSeconds(offset)
+  return self:bytesToSeconds(offset, track.rate)
 end
 
 --- Jump to a point inside the current track, given in seconds.
 function Tape:seekWithinTrack(seconds)
   local track = self.tracks[self.playing or 0]
   if not track then return false end
-  local offset = math.max(0, math.min(self:secondsToBytes(seconds), track.length))
+  local offset = math.max(0, math.min(self:secondsToBytes(seconds, track.rate), track.length))
   local wasPlaying = self:state() == "PLAYING"
   if wasPlaying then self.drive.stop() end
   self:seekTo(track.start + offset)

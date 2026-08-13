@@ -1,5 +1,5 @@
 {
-  version = "1.0.10",
+  version = "1.1.0",
   files = {
     ["app.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/app.lua",
@@ -19,17 +19,17 @@
     ["mplayer/tape.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/mplayer/tape.lua",
       path = "Music/mplayer/tape.lua",
-      sha256 = "778bff23c4dc1e88d61b8a08432642559998e58a69c87270bbbe45bf4e321ae9"
+      sha256 = "c134e0cc13ebab282205e957e43e639d0d1769503fec6d9073ba01c7d7df472d"
     },
     ["mplayer/download.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/mplayer/download.lua",
       path = "Music/mplayer/download.lua",
-      sha256 = "3ffc7c1de35258a15c3d6163f69e38841e6ab67a5fc32d0b564aa3b55410441b"
+      sha256 = "2cf0667f4cb29d44c67a64cc78f4e4a813b446a3de6f6ca5673fa5b4c17a78b3"
     },
     ["mplayer/catalog.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/mplayer/catalog.lua",
       path = "Music/mplayer/catalog.lua",
-      sha256 = "437cf8fc77f14881e8afca6a7d89aec119b042b78d2b64cad706fdee5bd6fcae"
+      sha256 = "759174b31aa8da0b0f32e2b53e538d17fa6eff2928ee7258bf42c878acdf057d"
     },
     ["mplayer/diag.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/mplayer/diag.lua",
@@ -39,7 +39,7 @@
     ["mplayer/player.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/mplayer/player.lua",
       path = "Music/mplayer/player.lua",
-      sha256 = "a834ce6e68005bdff202dc08edfc58f6a99d8edd853eb77f28634e656c09223c"
+      sha256 = "1fb6b05e32a9d71e1544a7c995198d197862bee1d84edb747e90743f8637ddc6"
     },
     ["mplayer/update.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/mplayer/update.lua",
@@ -49,7 +49,7 @@
     ["mplayer/ui.lua"] = {
       url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Music/mplayer/ui.lua",
       path = "Music/mplayer/ui.lua",
-      sha256 = "f743af644316dbcbb0e0781adf72baf8239c801bf509d6f903d2f97ef994a60a"
+      sha256 = "b36caf1228103fba96582b7c246fa99789821a7d4a9e1afc8601de842ef3ca3d"
     },
   },
   system = {
