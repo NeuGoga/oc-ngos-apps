@@ -91,14 +91,31 @@ function repo.songs(cfg)
   }
 end
 
+-- Percent-encode a repository path. Song filenames routinely contain spaces
+-- and accented characters, neither of which is legal in a URL. Each byte is
+-- encoded separately, so a UTF-8 character becomes several escapes -- which
+-- is exactly what GitHub expects. "/" is left alone so path separators
+-- survive.
+-- The safe set is spelled out rather than using %w: Lua's character classes
+-- consult the C locale, so whether a byte above 127 counts as alphanumeric
+-- varies between builds, and a UTF-8 lead byte could slip through unencoded.
+local function encodePath(path)
+  return (path:gsub("[^A-Za-z0-9%-%._~/]", function(c)
+    return ("%%%02X"):format(c:byte())
+  end))
+end
+
+repo.encodePath = encodePath
+
 --- URL for a path inside the repository (e.g. "Music/manifest.tbl").
 function repo.fileUrl(cfg, path)
+  local encoded = encodePath(path)
   if repo.isPrivate(cfg) then
     return ("https://api.github.com/repos/%s/%s/contents/%s?ref=%s")
-      :format(cfg.owner, cfg.name, path, cfg.branch)
+      :format(cfg.owner, cfg.name, encoded, cfg.branch)
   end
   return ("https://raw.githubusercontent.com/%s/%s/%s/%s")
-    :format(cfg.owner, cfg.name, cfg.branch, path)
+    :format(cfg.owner, cfg.name, cfg.branch, encoded)
 end
 
 --- Headers needed for this repo, or nil when it is public.
