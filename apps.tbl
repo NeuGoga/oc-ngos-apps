@@ -1,13 +1,13 @@
 {
   {
     id = "Term",
-    name = "NgOS Terminal",
+    name = "Term",
     desc = "Command Line Interface",
     manifest = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Term/manifest.tbl"
   },
   {
     id = "Files",
-    name = "NgOS Files",
+    name = "Files",
     desc = "File Explorer",
     manifest = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Files/manifest.tbl"
   }
