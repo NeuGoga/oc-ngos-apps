@@ -16,7 +16,7 @@ local ui = {}
 -- purpose rather than read from version.txt: that file records what was last
 -- downloaded, this records what is actually executing, and when a stale module
 -- is still cached those are not the same thing.
-local VERSION = "1.1.0" --[[VERSION]]
+local VERSION = "1.1.1" --[[VERSION]]
 
 local gpu = component.gpu
 

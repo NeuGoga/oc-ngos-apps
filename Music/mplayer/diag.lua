@@ -116,6 +116,61 @@ function diag.report(cfg, index)
   ranged["Range"] = "bytes=1000-"
   probe(lines, url, ranged, "range")
 
+  -- Does the tape actually hold the bytes the server has? This separates a
+  -- bad recording from bad playback, which is otherwise guesswork.
+  add(lines)
+  add(lines, "TAPE CONTENTS")
+  local tapeLib = require("mplayer.tape")
+  if not tapeLib.available() then
+    add(lines, "  no tape drive")
+  else
+    local deck = tapeLib.new()
+    local track
+    for _, t in ipairs(deck and deck.tracks or {}) do
+      if t.title == entry.title then track = t break end
+    end
+    if not deck or not deck.ready then
+      add(lines, "  no tape in the drive")
+    elseif not track then
+      add(lines, ("  \"%s\" is not recorded on this tape yet"):format(entry.title))
+      add(lines, "  (record it, then run this again)")
+    else
+      local SAMPLE = 4096
+      add(lines, ("  track at byte %d, length %d, rate %d")
+        :format(track.start, track.length, track.rate or 32768))
+
+      deck:stop()
+      deck:seekTo(track.start)
+      local onTape = deck.drive.read(SAMPLE)
+
+      local ranged = {}
+      for key, value in pairs(headers or {}) do ranged[key] = value end
+      ranged["Range"] = ("bytes=0-%d"):format(SAMPLE - 1)
+      local fromServer = repo.httpGet(url, ranged)
+
+      if not fromServer then
+        add(lines, "  could not fetch the source to compare against")
+      elseif not onTape then
+        add(lines, "  could not read the tape")
+      else
+        local n = math.min(#onTape, #fromServer, SAMPLE)
+        local firstBad
+        for i = 1, n do
+          if onTape:byte(i) ~= fromServer:byte(i) then firstBad = i break end
+        end
+        add(lines, ("  compared %d bytes"):format(n))
+        if firstBad then
+          add(lines, ("  MISMATCH at byte %d: tape %d, server %d")
+            :format(firstBad, onTape:byte(firstBad), fromServer:byte(firstBad)))
+          add(lines, "  the recording is wrong, not the playback")
+        else
+          add(lines, "  identical - the tape holds exactly what the server has")
+          add(lines, "  so any wrong sound is playback, not the recording")
+        end
+      end
+    end
+  end
+
   add(lines)
   add(lines, "EXPECTED")
   add(lines, "  Content-Length present, Accept-Ranges: bytes,")
