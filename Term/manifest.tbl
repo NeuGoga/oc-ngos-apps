@@ -1,0 +1,9 @@
+{
+  version = "1.0",
+  files = {
+    ["app.lua"] = {
+      url = "https://raw.githubusercontent.com/NeuGoga/oc-ngos-apps/main/Term/app.lua",
+      sha256 = "3b4e556aa5c511a2cceecb961fe25a6fdc95e96f371c10443634d82d27e1a38f"
+    }
+  }
+}
