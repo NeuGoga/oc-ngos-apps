@@ -171,8 +171,11 @@ function State:draw()
   write(x + 1, 1, "[" .. label .. "]", T.dim, T.panel)
 
   if p.tape.ready then
+    -- A track is only indexed once it finishes, so count what a running
+    -- recording has already laid down or the tape looks untouched.
+    local free = p.tape:free() - (p.job and p.job.written or 0)
     local usage = ("%s free of %s"):format(
-      player.formatSize(p.tape:free()), player.formatSize(p.tape:capacity()))
+      player.formatSize(math.max(0, free)), player.formatSize(p.tape:capacity()))
     local ux = titleWidth - #usage - 1
     if ux > x + #label + 4 then write(ux, 1, usage, T.dim, T.panel) end
   end
@@ -401,7 +404,7 @@ function State:drawFooter()
   fill(1, h, w, 1, T.panel)
   local hints
   if p.job then
-    hints = "ESC cancel download"
+    hints = "X cancels the recording"
   elseif self.view == "library" then
     hints = "TAB queue  ENTER record  R refresh  C repository  U update  Q quit   (* on tape  ! too big)"
   else
@@ -442,13 +445,13 @@ function State:readLine(title, initial, secret)
       local under = unicode.sub(shown, cursor, cursor)
       write(cursorX, y + 2, under ~= "" and under or " ", T.black, T.accent)
     end
-    write(x + 2, y + 3, "ENTER confirm    ESC cancel", T.dim, T.panel)
+    write(x + 2, y + 3, "ENTER confirm    CTRL+C cancel", T.dim, T.panel)
 
     local event, _, char, code = rt.pull()
     if event == "key_down" then
       if code == 28 then            -- enter
         return text
-      elseif code == 1 then         -- escape
+      elseif code == 1 or char == 3 then   -- escape (rarely arrives) or ctrl+c
         return nil
       elseif code == 14 then        -- backspace
         if cursor > 1 then
@@ -487,13 +490,13 @@ function State:confirm(question)
 
   fill(x, y, boxWidth, 4, T.panel)
   write(x + 2, y + 1, pad(question, boxWidth - 4), T.text, T.panel)
-  write(x + 2, y + 2, "Y confirm    N / ESC cancel", T.dim, T.panel)
+  write(x + 2, y + 2, "Y confirm    N cancel", T.dim, T.panel)
 
   while true do
     local event, _, char, code = rt.pull()
     if event == "key_down" then
       if char == 121 or char == 89 then return true end   -- y / Y
-      if char == 110 or char == 78 or code == 1 then return false end
+      if char == 110 or char == 78 or code == 1 or char == 3 then return false end
       return false
     end
   end
@@ -688,12 +691,10 @@ function State:onKey(char, code)
     elseif code == 201 then self:sel(self:sel() - self:listHeight())
     elseif code == 209 then self:sel(self:sel() + self:listHeight())
     elseif char == 113 or char == 81 then self.running = false
-    elseif code == 1 then
+    elseif char == 120 or char == 88 then                -- x: cancel recording
       if p.job then
         p.job:cancel(); p.job = nil
-        p.message = "Download cancelled."
-      else
-        self.view = "queue"
+        p.message = "Recording cancelled."
       end
     elseif code == 57 then p:toggle()
     end
@@ -728,11 +729,11 @@ function State:onKey(char, code)
   elseif code == 63 then                                     -- F5
     p:refresh()
     p.message = p.tape.ready and "Tape re-read." or "No tape in the drive."
-  elseif code == 1 then                                      -- escape
+  elseif char == 120 or char == 88 then                      -- x
     if p.job then
       p.job:cancel()
       p.job = nil
-      p.message = "Download cancelled."
+      p.message = "Recording cancelled."
     end
   end
   self.needsRedraw = true

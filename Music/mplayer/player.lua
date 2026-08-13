@@ -295,6 +295,10 @@ function Player:update()
     elseif state == "error" then
       self.message = "Download failed: " .. tostring(self.job.error)
       self.job = nil
+    else
+      -- Show bytes, rate and any resume attempts, so a slow or retrying
+      -- transfer is visibly different from a dead one.
+      self.message = self.job:status()
     end
     return self.state
   end

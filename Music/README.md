@@ -223,6 +223,7 @@ You want `tape_drive` and `internet`.
 | `↑` `↓` `ENTER` | move selection; play it (Queue) or record it (Library) |
 | `A` | record from a typed URL |
 | `D` | remove the selected track from the tape index |
+| `X` | cancel a recording in progress |
 | `R` | repeat mode (Queue) / refresh the list (Library) |
 | `S` | shuffle |
 | `-` `+` | volume |
@@ -284,8 +285,18 @@ a tape gets patchy.
   so stop-then-play resumes exactly where it was.
 - **Recording stops playback** — both use the single tape head.
 - **Transfers run about 80 KB/s.** `internet.read` and `tape.write` are both
-  non-direct component calls costing roughly a game tick each, so a 3 minute
-  song takes about ten seconds.
+  non-direct component calls costing roughly a game tick each, so several
+  chunks are moved per pass to amortise that.
+- **A dropped connection resumes itself.** The internet card fills its response
+  queue from a background thread and only raises end-of-stream when that
+  thread finishes cleanly; if the connection dies mid-transfer the flag is
+  never set and `read()` returns empty forever, so a naive loop hangs at
+  whatever percentage it reached. A transfer that goes quiet for 12 seconds is
+  treated as broken and reopened with an HTTP `Range` request from the byte it
+  stopped at, up to four times. If the server ignores the range and replies
+  200, the counter resets rather than double-counting.
+- **ESC never reaches the app** — Minecraft takes it to open the game menu. So
+  `X` cancels a recording and `Ctrl+C` dismisses a prompt.
 - **Speed changes pitch.** It is a tape. Listed times update when you change
   it.
 - **Under NgOS** the app pulls signals itself instead of yielding after each
