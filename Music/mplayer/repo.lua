@@ -108,23 +108,25 @@ end
 repo.encodePath = encodePath
 
 --- URL for a path inside the repository (e.g. "Music/manifest.tbl").
+--
+-- Always the raw host, public or private. It accepts an Authorization header
+-- for private repositories, and unlike the contents API it is a plain static
+-- file server: it advertises `Accept-Ranges: bytes` and answers a Range
+-- request with 206 and the bytes asked for.
+--
+-- That difference decides whether an interrupted song can be finished. The
+-- contents API silently ignores Range and replies 200 with the whole file
+-- again, so a resume there restarts from zero -- a download that is dropping
+-- connections can never converge.
 function repo.fileUrl(cfg, path)
-  local encoded = encodePath(path)
-  if repo.isPrivate(cfg) then
-    return ("https://api.github.com/repos/%s/%s/contents/%s?ref=%s")
-      :format(cfg.owner, cfg.name, encoded, cfg.branch)
-  end
   return ("https://raw.githubusercontent.com/%s/%s/%s/%s")
-    :format(cfg.owner, cfg.name, cfg.branch, encoded)
+    :format(cfg.owner, cfg.name, cfg.branch, encodePath(path))
 end
 
 --- Headers needed for this repo, or nil when it is public.
 function repo.headers(cfg)
   if not repo.isPrivate(cfg) then return nil end
-  return {
-    ["Authorization"] = "token " .. cfg.token,
-    ["Accept"] = "application/vnd.github.raw",
-  }
+  return { ["Authorization"] = "token " .. cfg.token }
 end
 
 --- Blocking HTTP GET. Fine for manifests and config; music goes through

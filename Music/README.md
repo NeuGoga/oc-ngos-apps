@@ -294,6 +294,12 @@ a tape gets patchy.
   only raises end-of-stream when the socket closes, and a keep-alive
   connection may never close — waiting for it alone hangs at 100%, then tries
   to "resume" past the end of the file forever.
+- **Files always come from `raw.githubusercontent.com`**, public or private —
+  the raw host takes an `Authorization` header for private repositories. The
+  contents API works too, but it is not a file server: it ignores `Range` and
+  answers 200 with the whole file, so a resume there silently restarts from
+  zero and a flaky download can never converge. The raw host advertises
+  `Accept-Ranges: bytes` and answers 206 properly.
 - **A dropped connection resumes itself.** The internet card fills its response
   queue from a background thread and only raises end-of-stream when that
   thread finishes cleanly; if the connection dies mid-transfer the flag is

@@ -54,6 +54,9 @@ local FLUSH_BYTES = 32768
 -- a few seconds are normal when the card's queue runs dry, so this is
 -- generous; a needless reconnect costs more than waiting.
 local STALL_SECONDS = 20
+-- When the server cannot resume, reconnecting throws away everything already
+-- transferred, so it is worth waiting far longer before doing it.
+local RESTART_SECONDS = 90
 local MAX_ATTEMPTS = 6
 
 function download.available()
@@ -118,6 +121,7 @@ function download.start(tapeObj, url, title, headers)
     truncated = false,
     attempts = 0,
     resuming = false,
+    resumable = nil,   -- set from Accept-Ranges on the first response
     lastByteAt = computer.uptime(),
     startedAt = computer.uptime(),
     sampleAt = computer.uptime(),
@@ -186,7 +190,10 @@ function Job:_connect()
 
   if self.resuming then
     if code == 200 then
-      -- The server ignored the range and is sending the whole file again.
+      -- The server ignored the range and is sending the whole file again, so
+      -- everything already on the tape is worthless. Remember that, because
+      -- restarting on every hiccup would never converge.
+      self.resumable = false
       self.written = 0
       self.truncated = false
     elseif code ~= 206 then
@@ -200,6 +207,8 @@ function Job:_connect()
       self.total = length
       if length > self.limit then self.truncated = true end
     end
+    local ranges = headerValue(headers, "Accept-Ranges")
+    self.resumable = ranges ~= nil and tostring(ranges):lower():find("bytes") ~= nil
   end
 
   -- Park the head where the next byte belongs; from here writes advance it.
@@ -274,8 +283,9 @@ function Job:step()
   if failure then
     return self:_retry(failure)
   end
-  if pending == 0 and computer.uptime() - self.lastByteAt > STALL_SECONDS then
-    return self:_retry(("stalled for %ds"):format(STALL_SECONDS))
+  local patience = (self.resumable == false) and RESTART_SECONDS or STALL_SECONDS
+  if pending == 0 and computer.uptime() - self.lastByteAt > patience then
+    return self:_retry(("stalled for %ds"):format(patience))
   end
 
   return self.state
@@ -357,7 +367,8 @@ function Job:status()
     line = line .. (" - quiet for %ds"):format(math.floor(quiet))
   end
   if self.attempts > 0 then
-    line = line .. (" - resumed %dx"):format(self.attempts)
+    line = line .. (self.resumable == false and " - RESTARTED %dx" or " - resumed %dx")
+      :format(self.attempts)
   end
   return line
 end
