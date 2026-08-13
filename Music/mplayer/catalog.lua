@@ -26,7 +26,7 @@ local CATALOG_PATH = "songs/catalog.tbl"
 -- @return array of { title, file, seconds, bytes }, or nil plus an error
 function catalog.fetch(cfg)
   local songs = repo.songs(cfg)
-  local list, err = repo.getTable(songs, CATALOG_PATH)
+  local list, err = repo.getTable(songs, CATALOG_PATH, true)
   if not list then return nil, err end
 
   local out = {}

@@ -87,7 +87,11 @@ end
 -- @param title   track title to record in the tape index
 -- @param headers optional header table, e.g. the auth headers for a private
 --                repository from mplayer.repo
-function download.start(tapeObj, url, title, headers)
+-- @param expectedBytes optional exact size. The song catalogue records this,
+--                and it is more trustworthy than a response header: it is
+--                what makes "have we got everything" answerable even if the
+--                card hands back headers we cannot read.
+function download.start(tapeObj, url, title, headers, expectedBytes)
   if not component.isAvailable("internet") then
     return nil, "no internet card installed"
   end
@@ -115,7 +119,8 @@ function download.start(tapeObj, url, title, headers)
     start = start,
     limit = limit,
     written = 0,
-    total = nil,
+    total = tonumber(expectedBytes),
+    expected = tonumber(expectedBytes),
     state = "connecting",
     error = nil,
     truncated = false,
@@ -196,16 +201,22 @@ function Job:_connect()
       self.resumable = false
       self.written = 0
       self.truncated = false
+    elseif code == 416 then
+      -- Range Not Satisfiable: there is nothing past what we already hold.
+      return self:_finish()
     elseif code ~= 206 then
       return self:_fail(("HTTP %s %s on resume"):format(tostring(code), tostring(message or "")))
     end
   elseif code and code ~= 200 then
     return self:_fail(("HTTP %s %s"):format(tostring(code), tostring(message or "")))
   else
+    -- A caller-supplied size wins: it came from our own catalogue.
     local length = tonumber(headerValue(headers, "Content-Length"))
-    if length then
+    if not self.expected and length then
       self.total = length
-      if length > self.limit then self.truncated = true end
+    end
+    if self.total and self.total > self.limit then
+      self.truncated = true
     end
     local ranges = headerValue(headers, "Accept-Ranges")
     self.resumable = ranges ~= nil and tostring(ranges):lower():find("bytes") ~= nil

@@ -239,11 +239,11 @@ end
 
 --- Start downloading a .dfpwm URL onto the end of the tape.
 -- @param headers optional auth headers (private repository)
-function Player:download(url, title, headers)
+function Player:download(url, title, headers, expectedBytes)
   if self.job then return nil, "a download is already running" end
   -- Recording writes to the tape head, so playback has to get out of the way.
   self:stop()
-  local job, err = download.start(self.tape, url, title, headers)
+  local job, err = download.start(self.tape, url, title, headers, expectedBytes)
   if not job then return nil, err end
   self.job = job
   return job
@@ -260,7 +260,7 @@ function Player:downloadFromCatalog(entry)
     return nil, "song repository is not configured (run: music setup)"
   end
   local url, headers = catalog.source(cfg, entry)
-  return self:download(url, entry.title, headers)
+  return self:download(url, entry.title, headers, entry.bytes)
 end
 
 function Player:removeTrack(i)

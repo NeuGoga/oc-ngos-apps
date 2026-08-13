@@ -120,6 +120,86 @@ if command == "update" then
   os.exit(0)
 end
 
+if command == "diag" then
+  local component = require("component")
+  local computer = require("computer")
+  local cfg = repoLib.load()
+  local songs = repoLib.songs(cfg)
+
+  print("components")
+  for _, name in ipairs({ "tape_drive", "internet", "gpu" }) do
+    print(("  %-12s %s"):format(name, component.isAvailable(name) and "yes" or "NO"))
+  end
+
+  print("song repository")
+  print(("  %s/%s  branch %s  token %s")
+    :format(songs.owner, songs.name, songs.branch,
+      repoLib.isPrivate(songs) and "set" or "none"))
+
+  local catalog = require("mplayer.catalog")
+  local list, listErr = catalog.fetch(cfg)
+  if not list then
+    print("  catalogue FAILED: " .. tostring(listErr))
+    os.exit(1)
+  end
+  print(("  catalogue OK, %d song(s)"):format(#list))
+  local entry = list[tonumber(args[2]) or 1]
+  if not entry then
+    print("  nothing to probe")
+    os.exit(0)
+  end
+  print(("  probing: %s (catalogue says %s bytes)")
+    :format(entry.title, tostring(entry.bytes)))
+
+  local url, headers = catalog.source(cfg, entry)
+  print("  url: " .. url)
+
+  -- What does the card actually hand back? Every hypothesis about stalled
+  -- downloads has come down to this.
+  local function probe(label, extra)
+    local h = {}
+    for k, v in pairs(headers or {}) do h[k] = v end
+    for k, v in pairs(extra or {}) do h[k] = v end
+
+    local handle, reason = component.internet.request(url, nil, h)
+    if not handle then print(("  %s: request rejected: %s"):format(label, tostring(reason))) return end
+
+    local deadline = computer.uptime() + 30
+    while true do
+      local ok, connected = pcall(handle.finishConnect)
+      if not ok then print(("  %s: connect error: %s"):format(label, tostring(connected))) return end
+      if connected then break end
+      if computer.uptime() > deadline then print("  " .. label .. ": timed out") return end
+    end
+
+    local code, message, respHeaders = handle.response()
+    print(("  %s: HTTP %s %s"):format(label, tostring(code), tostring(message or "")))
+    print(("    headers are a %s"):format(type(respHeaders)))
+    if type(respHeaders) == "table" then
+      for key, value in pairs(respHeaders) do
+        local shown = type(value) == "table" and tostring(value[1]) or tostring(value)
+        print(("      [%s] %s = %s"):format(type(key), tostring(key), shown))
+      end
+    end
+
+    -- How much does one read actually return?
+    local ok, chunk = pcall(handle.read, 8192)
+    print(("    first read: %s"):format(
+      not ok and ("error " .. tostring(chunk))
+      or chunk == nil and "nil (end of stream)"
+      or (#chunk .. " bytes")))
+    pcall(handle.close)
+  end
+
+  probe("plain")
+  probe("range", { ["Range"] = "bytes=1000-" })
+
+  print("")
+  print("Wanted: a Content-Length header, Accept-Ranges: bytes, HTTP 206 on")
+  print("the range probe, and a first read of about 2048 bytes.")
+  os.exit(0)
+end
+
 -- Everything below needs the drive -------------------------------------
 
 if not component.isAvailable("tape_drive") then
@@ -280,6 +360,7 @@ else
   print("  music get <n|name>        record a song from the library")
   print("  music setup               configure the repository and token")
   print("  music update              pull a newer version of this app")
+  print("  music diag [n]            probe the connection for song n")
   print("  music wipe                clear the tape's track index")
 end
 

@@ -180,16 +180,26 @@ function repo.httpGet(url, headers, timeout)
 end
 
 --- Fetch a repo file as a string.
-function repo.get(cfg, path)
+-- @param fresh bypass the CDN cache. raw.githubusercontent.com caches for a
+--        few minutes, so a manifest read straight after a push can be older
+--        than the files it describes -- which makes an update either do
+--        nothing or fail its checksums. A query string is part of the cache
+--        key, so a unique one always fetches the current commit.
+function repo.get(cfg, path, fresh)
   if not repo.configured(cfg) then
     return nil, "repository is not configured yet"
   end
-  return repo.httpGet(repo.fileUrl(cfg, path), repo.headers(cfg))
+  local url = repo.fileUrl(cfg, path)
+  if fresh then
+    url = url .. "?nc=" .. tostring(math.floor(computer.uptime() * 1000)) ..
+      tostring(math.random(1000, 9999))
+  end
+  return repo.httpGet(url, repo.headers(cfg))
 end
 
 --- Fetch and unserialize one of the .tbl files.
-function repo.getTable(cfg, path)
-  local body, err = repo.get(cfg, path)
+function repo.getTable(cfg, path, fresh)
+  local body, err = repo.get(cfg, path, fresh)
   if not body then return nil, err end
   local value = serialization.unserialize(body)
   if type(value) ~= "table" then

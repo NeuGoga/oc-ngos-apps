@@ -64,7 +64,7 @@ end
 function update.check(cfg)
   cfg = cfg or repo.load()
   local path = (cfg.app or "Music") .. "/manifest.tbl"
-  local manifest, err = repo.getTable(cfg, path)
+  local manifest, err = repo.getTable(cfg, path, true)
   if not manifest then return nil, err end
   if type(manifest.files) ~= "table" then
     return nil, "manifest has no file list"
@@ -120,12 +120,12 @@ function update.apply(manifest, cfg, progress)
     -- store uses) and a repo-relative `path`. Private repos must go through
     -- the authenticated API, so they use `path`.
     local body, err
-    if repo.isPrivate(cfg) and job.info.path then
-      body, err = repo.get(cfg, job.info.path)
+    if job.info.path then
+      -- Always by repo path and always fresh, so a cached copy of one file
+      -- can never be installed against a newer manifest's checksum.
+      body, err = repo.get(cfg, job.info.path, true)
     elseif job.info.url and job.info.url ~= "" then
       body, err = repo.httpGet(job.info.url, nil)
-    elseif job.info.path then
-      body, err = repo.get(cfg, job.info.path)
     else
       err = "manifest entry has neither url nor path"
     end
