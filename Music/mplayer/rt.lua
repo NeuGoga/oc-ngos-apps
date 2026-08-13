@@ -39,6 +39,33 @@ local function isOverlayTouch(sig)
   return sig[4] == 1 and sig[3] >= w - 1
 end
 
+--- Quit, the way the kernel expects.
+--
+-- NgOS apps are not written to return. The desktop and the store both sit in
+-- `while true do coroutine.yield() end` and are closed by the kernel's title
+-- bar button. That is not just convention: the kernel's launch path resumes a
+-- new app and only checks `if not ok`, never whether the coroutine finished
+-- (the event path checks both). Since this app keeps control for its whole
+-- life inside that first resume, returning normally leaves the kernel holding
+-- a dead coroutine as the active process, and the next key press reports
+-- "App Crashed: cannot resume dead coroutine".
+--
+-- So instead of returning, synthesise the click the close button produces and
+-- hand over. The kernel tears us down exactly as it would any other app.
+function rt.close()
+  if not rt.ngos then return end
+
+  local gpu = component.gpu
+  local width = gpu.getResolution()
+  computer.pushSignal("touch", gpu.getScreen(), width, 1, 0)
+
+  -- Park. The kernel handles that click itself rather than forwarding it, so
+  -- this never resumes; the loop only guards against a stray wake-up.
+  while true do
+    coroutine.yield()
+  end
+end
+
 --- Wait for the next signal.
 -- @param timeout seconds to wait, or nil to wait forever
 -- @return the signal (name, ...), or nil on timeout

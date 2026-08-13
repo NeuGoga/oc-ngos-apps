@@ -292,7 +292,14 @@ a tape gets patchy.
   event, because the kernel only resumes an app when a real signal arrives and
   a media player needs a clock. Clicks on the kernel's own minimise and close
   buttons are pushed back and handed over, so the window controls still work.
-  See [`mplayer/rt.lua`](mplayer/rt.lua).
+- **Quitting hands back to the kernel** rather than returning. NgOS apps are
+  not written to return — the desktop and the store both loop on
+  `coroutine.yield()` forever and are closed by the title bar button. The
+  kernel's launch path resumes a new app and only checks `if not ok`, never
+  whether the coroutine finished, so an app that returns leaves a dead
+  coroutine installed as the active process and the next key press reports
+  "App Crashed". `Q` therefore synthesises the same click the close button
+  produces. Both behaviours live in [`mplayer/rt.lua`](mplayer/rt.lua).
 
 ---
 

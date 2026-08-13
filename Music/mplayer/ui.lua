@@ -795,6 +795,10 @@ function ui.run(p)
   gpu.setBackground(previousBg)
   gpu.setForeground(previousFg)
   gpu.fill(1, 1, w, h, " ")
+
+  -- Under NgOS this does not return: the kernel closes us. Under OpenOS it is
+  -- a no-op and control goes back to the shell.
+  rt.close()
 end
 
 ui.theme = T

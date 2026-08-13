@@ -25,9 +25,20 @@ local function abort(message)
   gpu.setForeground(0xDCDCE6)
   gpu.set(2, 4, message)
   gpu.set(2, 6, "Touch anywhere to close.")
-  -- Wait for one interaction so the message is actually readable, then let
-  -- the coroutine finish, which is how an NgOS app exits.
+  -- Wait for one interaction so the message can be read, then ask the kernel
+  -- to close us. Returning instead would leave it holding a dead coroutine --
+  -- its launch path never checks for one -- and the next key press would
+  -- report "App Crashed".
   require("computer").pullSignal(15)
+  local ok, rt = pcall(require, "mplayer.rt")
+  if ok then
+    rt.close()
+  else
+    -- rt is what failed to load; do its job inline.
+    local width = gpu.getResolution()
+    require("computer").pushSignal("touch", gpu.getScreen(), width, 1, 0)
+    while true do coroutine.yield() end
+  end
 end
 
 local ok, playerLib = pcall(require, "mplayer.player")
