@@ -85,14 +85,29 @@ def find_ffmpeg() -> str:
     sys.exit("ffmpeg not found.  winget install Gyan.FFmpeg  (then reopen the terminal)")
 
 
-def stream_song(conn: socket.socket, ffmpeg: str, source: Path, rate: int, raw: bool) -> int:
+def encode_stream(ffmpeg: str, source: Path, rate: int, raw: bool, variant: str):
+    """Yield DFPWM chunks for `source`, converting as we go.
+
+    A .dfpwm input is passed through untouched -- it is already encoded, and
+    re-encoding one-bit audio into one-bit audio only adds noise.
+    """
+    if source.suffix.lower() == ".dfpwm":
+        with source.open("rb") as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    return
+                yield chunk
+        return
+
     command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-i", str(source), "-vn"]
     if not raw:
         command += ["-af", filter_chain(rate)]
     command += ["-ac", "1", "-ar", str(rate), "-f", "s8", "-"]
 
-    codec = dfpwm.DFPWM()          # one context for the whole song: it is stateful
-    sent = 0
+    # One codec context for the whole song: both variants are stateful, and
+    # restarting mid-song would audibly glitch.
+    codec = dfpwm.DFPWM1a() if variant == "1a" else dfpwm.DFPWM()
     leftover = b""
 
     proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -102,29 +117,38 @@ def stream_song(conn: socket.socket, ffmpeg: str, source: Path, rate: int, raw: 
             if not pcm:
                 break
             pcm = leftover + pcm
-            # compress() consumes whole bytes of output, i.e. 8 samples each.
+            # compress() emits one byte per 8 samples, so feed whole groups.
             usable = len(pcm) - (len(pcm) % 8)
             leftover = pcm[usable:]
             if usable:
-                conn.sendall(bytes(codec.compress(pcm[:usable])))
-                sent += usable // 8
+                yield bytes(codec.compress(pcm[:usable]))
     finally:
         proc.stdout.close()
         proc.wait()
 
+
+def stream_song(conn, ffmpeg, source, rate, raw, variant) -> int:
+    sent = 0
+    for chunk in encode_stream(ffmpeg, source, rate, raw, variant):
+        conn.sendall(chunk)
+        sent += len(chunk)
     return sent
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("song", help="any file ffmpeg can read")
+    parser.add_argument("song", help="any file ffmpeg can read, or a .dfpwm to serve as-is")
     parser.add_argument("--port", type=int, default=25999)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--hq", action="store_true",
                         help="encode at 65536 Hz; needs playback at speed 2.0")
     parser.add_argument("--raw", action="store_true", help="skip the filter chain")
     parser.add_argument("--once", action="store_true", help="exit after one song")
+    parser.add_argument("--codec", choices=("1.0", "1a"), default="1.0",
+                        help="1.0 is what Computronics decodes; 1a is ffmpeg's")
+    parser.add_argument("--out", metavar="FILE",
+                        help="write the encoded file and exit, instead of serving")
     args = parser.parse_args()
 
     source = Path(args.song)
@@ -134,13 +158,30 @@ def main() -> None:
     ffmpeg = find_ffmpeg()
     rate = HQ_RATE if args.hq else NATIVE_RATE
 
+    if args.out:
+        total = 0
+        with open(args.out, "wb") as f:
+            for chunk in encode_stream(ffmpeg, source, rate, args.raw, args.codec):
+                f.write(chunk)
+                total += len(chunk)
+        seconds = total / (rate / 8)
+        print(f"Wrote {args.out}")
+        print(f"  {total/1048576:.2f} MB  {int(seconds)//60}:{int(seconds)%60:02d}  "
+              f"{rate} Hz  DFPWM {args.codec}")
+        return
+
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((args.host, args.port))
     server.listen(1)
 
+    passthrough = source.suffix.lower() == ".dfpwm"
     print(f"Serving  {source.name}")
-    print(f"         {rate} Hz{'  (HQ - play at speed 2.0)' if args.hq else ''}, DFPWM 1.0")
+    if passthrough:
+        print("         already encoded - passing the bytes through untouched")
+    else:
+        print(f"         {rate} Hz{'  (HQ - play at speed 2.0)' if args.hq else ''}, "
+              f"DFPWM {args.codec}")
     print(f"Listening on {args.host}:{args.port}")
     print("Expose it with:  ngrok tcp %d" % args.port)
     print("Waiting for the computer to connect...  (Ctrl+C to stop)")
@@ -150,7 +191,7 @@ def main() -> None:
             conn, peer = server.accept()
             print(f"\n  {peer[0]} connected - streaming...")
             try:
-                bytes_sent = stream_song(conn, ffmpeg, source, rate, args.raw)
+                bytes_sent = stream_song(conn, ffmpeg, source, rate, args.raw, args.codec)
                 seconds = bytes_sent / (rate / 8)
                 print(f"  sent {bytes_sent/1048576:.2f} MB "
                       f"({int(seconds)//60}:{int(seconds)%60:02d} of audio)")

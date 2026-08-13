@@ -94,8 +94,62 @@ class DFPWM:
         return out
 
 
-def compress(pcm: bytes) -> bytes:
-    return bytes(DFPWM().compress(pcm))
+class DFPWM1a:
+    """The *other* codec: ChenThread's 1a, what ffmpeg and CC:Tweaked use.
+
+    Included so the two can be compared directly on real hardware. On a
+    Computronics drive this should sound like hiss, because the drive decodes
+    1.0 -- but a claim like that is worth being able to test rather than take
+    on trust.
+
+    Ported from ffmpeg's libavcodec/dfpwmenc.c, itself from
+    https://github.com/ChenThread/dfpwm/tree/master/1a -- public domain.
+    """
+
+    def __init__(self) -> None:
+        self.q = 0          # charge
+        self.s = 0          # strength, 0..1023
+        self.lt = -128      # last target
+
+    def compress(self, pcm: bytes) -> bytearray:
+        """8-bit signed PCM in, packed 1-bit DFPWM1a out."""
+        out = bytearray()
+        for base in range(0, len(pcm) - 7, 8):
+            d = 0
+            for k in range(8):
+                v = pcm[base + k]
+                if v > 127:                 # bytes are unsigned; make signed
+                    v -= 256
+
+                t = 127 if (v > self.q or (v == self.q and v == 127)) else -128
+                d >>= 1
+                if t > 0:
+                    d |= 0x80
+
+                # adjust charge — note 10-bit precision, unlike 1.0's 8
+                nq = self.q + ((self.s * (t - self.q) + 512) >> 10)
+                if nq == self.q and nq != t:
+                    nq += 1 if t == 127 else -1
+                self.q = nq
+
+                # adjust strength — steps by one, with a floor of 8
+                st = 0 if t != self.lt else 1023
+                ns = self.s
+                if ns != st:
+                    ns += 1 if st != 0 else -1
+                if ns < 8:
+                    ns = 8
+                self.s = ns
+
+                self.lt = t
+            out.append(d)
+        return out
+
+
+def compress(pcm: bytes, variant: str = "1.0") -> bytes:
+    """Compress to DFPWM. `variant` is "1.0" (Computronics) or "1a" (ffmpeg)."""
+    codec = DFPWM1a() if variant == "1a" else DFPWM()
+    return bytes(codec.compress(pcm))
 
 
 def decompress(data: bytes) -> bytes:
